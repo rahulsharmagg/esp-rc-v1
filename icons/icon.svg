@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 359.75 359.75">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #fff;
+      }
+
+      .cls-2 {
+        fill: #009444;
+      }
+
+      .cls-2, .cls-3, .cls-4 {
+        stroke: #231f20;
+        stroke-miterlimit: 10;
+        stroke-width: 3px;
+      }
+
+      .cls-3 {
+        fill: #ed1c24;
+      }
+
+      .cls-4 {
+        fill: none;
+      }
+
+      .cls-5 {
+        font-family: BankGothicBT-Medium, 'BankGothic Md BT';
+        font-size: 27.13px;
+        font-weight: 500;
+        letter-spacing: -.1em;
+      }
+
+      .cls-5, .cls-6 {
+        fill: #231f20;
+      }
+    </style>
+  </defs>
+  <g id="Layer_1-2" data-name="Layer 1">
+    <g>
+      <rect id="SAFE_AREA" data-name="SAFE AREA" class="cls-1" width="359.75" height="359.75"/>
+      <g id="ICON">
+        <g>
+          <rect class="cls-2" x="111.12" y="99.45" width="34.5" height="58.95"/>
+          <rect class="cls-2" x="222.05" y="99.45" width="34.5" height="58.95"/>
+        </g>
+        <rect class="cls-4" x="127.68" y="118.63" width="112.32" height="150.65"/>
+        <rect class="cls-3" x="156.48" y="142.56" width="54.71" height="43.2"/>
+        <g>
+          <rect class="cls-6" x="99.61" y="164.16" width="28.76" height="85.68"/>
+          <rect class="cls-6" x="239.3" y="164.16" width="28.76" height="85.68"/>
+        </g>
+        <text class="cls-5" transform="translate(135.52 252.6) scale(.85 1)"><tspan x="0" y="0">ESP - RC</tspan></text>
+      </g>
+    </g>
+  </g>
+</svg>

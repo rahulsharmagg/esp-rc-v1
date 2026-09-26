@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 201.6 215.08">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+      }
+
+      .cls-1, .cls-2, .cls-3 {
+        stroke: #231f20;
+        stroke-miterlimit: 10;
+      }
+
+      .cls-2 {
+        fill: #00a651;
+        stroke-width: 1.2px;
+      }
+
+      .cls-4 {
+        font-size: 30px;
+      }
+
+      .cls-4, .cls-5, .cls-6 {
+        font-family: CascadiaMono-Regular, 'Cascadia Mono';
+        font-variation-settings: 'wght' 400;
+      }
+
+      .cls-4, .cls-6, .cls-7 {
+        fill: #231f20;
+      }
+
+      .cls-5 {
+        fill: #fff;
+      }
+
+      .cls-5, .cls-6, .cls-8 {
+        font-size: 8px;
+      }
+
+      .cls-8 {
+        fill: #006838;
+        font-family: MS-UIGothic, 'MS UI Gothic';
+      }
+
+      .cls-3 {
+        fill: #be1e2d;
+        stroke-width: 1.43px;
+      }
+    </style>
+  </defs>
+  <g id="Layer_1-2" data-name="Layer 1">
+    <g id="ESP-RC_V1.0" data-name="ESP-RC V1.0">
+      <rect id="CHASIS" class="cls-1" x="21.6" y="14.42" width="158.4" height="200.16"/>
+      <rect id="Red_Block_-_ULTRASONIC" data-name="Red Block - ULTRASONIC" class="cls-3" x="60.28" y="40.34" width="81.05" height="41.76"/>
+      <g id="Green_Block_-_IR" data-name="Green Block - IR">
+        <rect class="cls-2" x="160.36" y=".6" width="26.64" height="39.6"/>
+        <rect class="cls-2" x="13.6" y=".6" width="26.64" height="39.6"/>
+      </g>
+      <text id="Name" class="cls-4" transform="translate(48.07 157.59)"><tspan x="0" y="0">ESP-RC</tspan></text>
+      <text id="Version" class="cls-6" transform="translate(75.02 203.78)"><tspan x="0" y="0">Version 1.0</tspan></text>
+      <text id="Status" class="cls-8" transform="translate(78.49 175.79)"><tspan x="0" y="0">CONNECTED</tspan></text>
+      <g id="Wheels">
+        <polygon id="Left" class="cls-7" points="0 75.62 0 78.98 3.84 78.98 3.84 103.94 0 103.94 0 143.45 3.84 143.45 3.84 165.53 0 165.53 0 192.74 3.84 192.74 3.84 203.86 21.6 203.86 21.6 75.62 0 75.62"/>
+        <polygon id="Right" class="cls-7" points="201.6 203.86 201.6 200.5 197.76 200.5 197.76 175.54 201.6 175.54 201.6 136.02 197.76 136.02 197.76 113.94 201.6 113.94 201.6 86.74 197.76 86.74 197.76 75.62 180 75.62 180 203.86 201.6 203.86"/>
+      </g>
+      <g id="Labels">
+        <g id="Label">
+          <rect id="BG" class="cls-7" x="17.05" y="27.14" width="19.74" height="8.4"/>
+          <text id="Value" class="cls-5" transform="translate(17.54 34.17)"><tspan x="0" y="0">IR-L</tspan></text>
+        </g>
+        <g id="Label-2" data-name="Label">
+          <rect id="BG-2" data-name="BG" class="cls-7" x="163.81" y="28.27" width="19.74" height="8.4"/>
+          <text id="Value-2" data-name="Value" class="cls-5" transform="translate(164.3 35.3)"><tspan x="0" y="0">IR-R</tspan></text>
+        </g>
+        <g id="Label-3" data-name="Label">
+          <rect id="Bg" class="cls-7" x="73.8" y="56.1" width="54" height="9.72"/>
+          <text id="Value-3" data-name="Value" class="cls-5" transform="translate(76.32 63.75)"><tspan x="0" y="0">28 CM - 45</tspan></text>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

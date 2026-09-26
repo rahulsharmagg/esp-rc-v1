@@ -1,0 +1,928 @@
+/* ==========================================================================
+   ESP32 Web Bluetooth RC Car - Cyber Cockpit (Landscape Light Red & Black Theme)
+   Rectangular Font & High-Contrast Mech Aesthetic
+   ========================================================================== */
+
+:root {
+  --bg-light: #f1f3f7;
+  --bg-card: #ffffff;
+  --bg-card-alt: #f8fafc;
+  --border-dark: #1e293b;
+  --border-light: #cbd5e1;
+  --red-primary: #dc2626;
+  --red-dark: #991b1b;
+  --red-glow: rgba(220, 38, 38, 0.4);
+  --black-solid: #090d16;
+  --black-card: #111827;
+  --text-dark: #0f172a;
+  --text-muted: #64748b;
+  --green-ok: #16a34a;
+  --font-rect: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  position: fixed;
+  top: 0;
+  left: 0;
+  background-color: var(--bg-light);
+  /* Tech Light Checkered / Grid Background */
+  background-image: 
+    linear-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+  color: var(--text-dark);
+  font-family: var(--font-rect);
+  touch-action: none;
+}
+
+/* ==========================================================================
+   1. LOADING / SPLASH SCREEN (Using user's icon.svg)
+   ========================================================================== */
+.loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  background-color: #f8fafc;
+  background-image: 
+    linear-gradient(rgba(220, 38, 38, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(220, 38, 38, 0.04) 1px, transparent 1px);
+  background-size: 24px 24px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.5s;
+}
+
+.loading-screen.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.loading-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 24px 36px;
+  background: #ffffff;
+  border: 2px solid var(--black-solid);
+  box-shadow: 6px 6px 0px var(--red-primary), 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  max-width: 360px;
+  width: 90%;
+}
+
+.loading-logo-box {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 12px;
+}
+
+.loading-icon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.15));
+}
+
+.logo-pulse-ring {
+  position: absolute;
+  inset: -6px;
+  border: 2px dashed var(--red-primary);
+  border-radius: 50%;
+  animation: rotate-ring 6s linear infinite;
+}
+
+@keyframes rotate-ring {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.loading-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: var(--black-solid);
+  margin-bottom: 4px;
+}
+
+.loading-subtitle {
+  font-size: 0.68rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  margin-bottom: 16px;
+}
+
+.loading-bar-wrap {
+  width: 100%;
+  height: 6px;
+  background: #e2e8f0;
+  border: 1px solid var(--black-solid);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.loading-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--red-primary);
+  transition: width 0.3s ease;
+}
+
+.loading-status-text {
+  font-size: 0.65rem;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  color: var(--red-primary);
+  letter-spacing: 0.5px;
+}
+
+/* ==========================================================================
+   2. ROTATE DEVICE NOTICE (Enforce Landscape Only)
+   ========================================================================== */
+.rotate-notice {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #090d16;
+  color: #fff;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+  text-align: center;
+}
+
+@media (orientation: portrait) {
+  .rotate-notice {
+    display: flex;
+  }
+  .cockpit-container {
+    display: none !important;
+  }
+}
+
+.rotate-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-width: 320px;
+}
+
+.rotate-phone-anim svg {
+  width: 56px;
+  height: 56px;
+  stroke: var(--red-primary);
+  animation: rotate-phone 2s ease-in-out infinite;
+  margin-bottom: 16px;
+}
+
+@keyframes rotate-phone {
+  0%, 15% { transform: rotate(0deg); }
+  50%, 65% { transform: rotate(90deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.rotate-box h2 {
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: #fff;
+  margin-bottom: 8px;
+}
+
+.rotate-box p {
+  font-size: 0.8rem;
+  color: #94a3b8;
+  line-height: 1.4;
+}
+
+/* ==========================================================================
+   3. COCKPIT SHELL (Landscape Only Viewport Lock)
+   ========================================================================== */
+.cockpit-container {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px;
+  gap: 6px;
+  background-color: var(--bg-light);
+}
+
+/* --------------------------------------------------------------------------
+   Top Bar
+   -------------------------------------------------------------------------- */
+.cockpit-top-bar {
+  height: 38px;
+  min-height: 38px;
+  background: var(--bg-card);
+  border: 2px solid var(--black-solid);
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.15);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.top-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bar-logo {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.bar-title-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.bar-title {
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  color: var(--black-solid);
+  line-height: 1.1;
+}
+
+.bar-latency {
+  font-size: 0.58rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.top-center {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.telemetry-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-light);
+  font-size: 0.62rem;
+  font-family: var(--font-mono);
+}
+
+.pill-lbl {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.pill-val {
+  color: var(--red-primary);
+  font-weight: 800;
+}
+
+.bar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  background: #ffffff;
+  border: 1.5px solid var(--black-solid);
+  font-size: 0.64rem;
+  font-weight: 800;
+  color: var(--black-solid);
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.bar-btn svg { stroke: var(--black-solid); }
+
+.bar-btn.active {
+  background: var(--red-primary);
+  color: #fff;
+  border-color: var(--red-dark);
+}
+
+.bar-btn.active svg { stroke: #fff; }
+.bar-btn:active { transform: scale(0.95); }
+
+.top-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  background: #ffffff;
+  border: 1px solid var(--border-dark);
+  font-size: 0.62rem;
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red-primary);
+  box-shadow: 0 0 6px var(--red-primary);
+}
+
+.status-dot.connected {
+  background: var(--green-ok);
+  box-shadow: 0 0 6px var(--green-ok);
+}
+
+.btn-pair, .btn-disconnect {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--black-solid);
+  color: #ffffff;
+  border: none;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.btn-pair:hover, .btn-pair:active {
+  background: var(--red-primary);
+}
+
+.btn-disconnect {
+  background: var(--red-primary);
+}
+
+/* --------------------------------------------------------------------------
+   Main Workspace: 3-Column Grid
+   -------------------------------------------------------------------------- */
+.cockpit-workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr 180px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   LEFT PANEL (Driving Mode + Controls)
+   ========================================================================== */
+.panel-left {
+  background: var(--bg-card);
+  border: 2px solid var(--black-solid);
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.12);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  gap: 6px;
+  overflow: hidden;
+}
+
+/* Mode Buttons [MANUAL] & [AUTOMATIC] */
+.drive-mode-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.mode-switch-btn {
+  padding: 5px 0;
+  background: #ffffff;
+  border: 1.5px solid var(--black-solid);
+  color: var(--black-solid);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.8px;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s;
+}
+
+.mode-switch-btn.active {
+  background: var(--black-solid);
+  color: #ffffff;
+  border-color: var(--black-solid);
+  box-shadow: 0 0 0 1px var(--red-primary);
+}
+
+.mode-switch-btn:nth-child(2).active {
+  background: var(--red-primary);
+  color: #ffffff;
+  border-color: var(--red-dark);
+}
+
+/* Control Selector Tabs */
+.control-type-tabs {
+  display: flex;
+  background: #e2e8f0;
+  border: 1px solid var(--border-dark);
+  padding: 2px;
+  gap: 2px;
+}
+
+.type-tab {
+  flex: 1;
+  padding: 3px 0;
+  background: transparent;
+  border: none;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.12s;
+}
+
+.type-tab.active {
+  background: #ffffff;
+  color: var(--black-solid);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+/* Touch Control Surface */
+.touch-control-viewport {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  touch-action: none;
+}
+
+/* 1. Joystick */
+.joystick-surface {
+  width: clamp(140px, 44vh, 185px);
+  height: clamp(140px, 44vh, 185px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  touch-action: none;
+}
+
+.joystick-outer-ring {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffffff 0%, #f1f5f9 100%);
+  border: 2.5px solid var(--black-solid);
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.08), 3px 3px 0px rgba(0,0,0,0.15);
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  touch-action: none;
+}
+
+.cross-h, .cross-v {
+  position: absolute;
+  background: rgba(220, 38, 38, 0.3);
+  pointer-events: none;
+}
+.cross-h { width: 100%; height: 1.5px; }
+.cross-v { height: 100%; width: 1.5px; }
+
+.joystick-knob {
+  width: clamp(48px, 14vh, 60px);
+  height: clamp(48px, 14vh, 60px);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, var(--red-primary), var(--red-dark));
+  border: 2px solid var(--black-solid);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+  position: absolute;
+  top: calc(50% - clamp(24px, 7vh, 30px));
+  left: calc(50% - clamp(24px, 7vh, 30px));
+  cursor: grab;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.knob-dot {
+  width: 10px;
+  height: 10px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 4px #fff;
+}
+
+/* 2. D-Pad Buttons */
+.dpad-surface {
+  display: grid;
+  grid-template-columns: repeat(3, clamp(42px, 13vh, 56px));
+  grid-template-rows: repeat(3, clamp(42px, 13vh, 56px));
+  gap: 4px;
+  touch-action: none;
+}
+
+.d-btn {
+  background: #ffffff;
+  border: 1.5px solid var(--black-solid);
+  color: var(--black-solid);
+  font-size: clamp(1rem, 3.5vh, 1.25rem);
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.15);
+  transition: transform 0.05s ease;
+  touch-action: none;
+}
+
+.d-btn.diag { color: var(--text-muted); font-size: 0.9rem; }
+.d-btn:active, .d-btn.pressed {
+  background: var(--red-primary);
+  color: #fff;
+  border-color: var(--red-dark);
+  transform: translate(1px, 1px);
+  box-shadow: 0 0 8px var(--red-glow);
+}
+
+.d-btn.stop-core {
+  background: #fee2e2;
+  border-color: var(--red-primary);
+}
+
+.stop-box {
+  width: 12px;
+  height: 12px;
+  background: var(--red-primary);
+}
+
+.d-btn.stop-core:active, .d-btn.stop-core.pressed {
+  background: var(--red-primary);
+}
+.d-btn.stop-core:active .stop-box, .d-btn.stop-core.pressed .stop-box {
+  background: #ffffff;
+}
+
+/* 3. Differential */
+.diff-surface {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  width: 100%;
+  max-width: 240px;
+  height: 100%;
+}
+
+.tank-lane {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  height: 100%;
+}
+
+.lane-title { font-size: 0.58rem; font-weight: 800; color: var(--text-muted); }
+.lane-val { font-size: 0.68rem; font-family: var(--font-mono); font-weight: 800; color: var(--red-primary); }
+
+.slider-trough {
+  width: 36px;
+  flex: 1;
+  background: #f1f5f9;
+  border: 1.5px solid var(--black-solid);
+  position: relative;
+  display: flex;
+  justify-content: center;
+  touch-action: none;
+}
+
+.slider-handle {
+  width: 30px;
+  height: 30px;
+  background: var(--black-solid);
+  border: 2px solid var(--red-primary);
+  position: absolute;
+  top: calc(50% - 15px);
+  cursor: pointer;
+  touch-action: none;
+}
+
+/* ==========================================================================
+   CENTER PANEL (Radar, Throttle & Emergency Stop)
+   ========================================================================== */
+.panel-center {
+  background: var(--bg-card);
+  border: 2px solid var(--black-solid);
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.12);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 8px 10px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+/* Radar Box */
+.radar-box {
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-light);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.radar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.radar-tag { color: var(--text-muted); }
+.radar-dist { font-family: var(--font-mono); font-weight: 800; color: var(--red-primary); }
+
+.radar-track {
+  width: 100%;
+  height: 6px;
+  background: #e2e8f0;
+  border: 1px solid var(--border-dark);
+  overflow: hidden;
+}
+
+.radar-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--green-ok);
+  transition: width 0.15s, background 0.15s;
+}
+
+.radar-fill.warning { background: var(--yellow); }
+.radar-fill.danger { background: var(--red-primary); }
+
+/* Throttle Card */
+.throttle-card {
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-light);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.throttle-title-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.62rem;
+  font-weight: 800;
+  color: var(--black-solid);
+}
+
+.pwm-readout {
+  font-family: var(--font-mono);
+  color: var(--red-primary);
+}
+
+.throttle-bar {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: #cbd5e1;
+  border: 1px solid var(--black-solid);
+  outline: none;
+}
+
+.throttle-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--red-primary);
+  border: 1.5px solid var(--black-solid);
+  cursor: pointer;
+}
+
+.throttle-bar::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--red-primary);
+  border: 1.5px solid var(--black-solid);
+  cursor: pointer;
+}
+
+/* Emergency Stop Button */
+.emergency-brake-btn {
+  width: 100%;
+  height: clamp(48px, 16vh, 64px);
+  background: linear-gradient(135deg, var(--red-primary), var(--red-dark));
+  border: 2px solid var(--black-solid);
+  color: #ffffff;
+  font-size: clamp(0.8rem, 2.5vh, 0.95rem);
+  font-weight: 900;
+  letter-spacing: 1px;
+  cursor: pointer;
+  box-shadow: 3px 3px 0px var(--black-solid);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform 0.05s ease;
+}
+
+.emergency-brake-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px var(--black-solid);
+}
+
+/* ==========================================================================
+   RIGHT PANEL (150x150 Minimap & Bottom-Up Fading Logs)
+   ========================================================================== */
+.panel-right {
+  width: 180px;
+  background: var(--bg-card);
+  border: 2px solid var(--black-solid);
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.12);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px;
+  gap: 6px;
+  overflow: hidden;
+}
+
+/* Minimap Frame (Strictly 150x150) */
+.minimap-container {
+  width: 150px;
+  height: 150px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.minimap-box {
+  width: 150px;
+  height: 150px;
+  background: #090d16;
+  border: 2px solid var(--red-primary);
+  box-shadow: inset 0 0 15px rgba(220, 38, 38, 0.25);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.minimap-grid {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(220, 38, 38, 0.15) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(220, 38, 38, 0.15) 1px, transparent 1px);
+  background-size: 15px 15px;
+}
+
+.minimap-rings {
+  position: absolute;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  border: 1px dashed rgba(220, 38, 38, 0.35);
+}
+
+.minimap-cross-h, .minimap-cross-v {
+  position: absolute;
+  background: rgba(220, 38, 38, 0.25);
+}
+.minimap-cross-h { width: 100%; height: 1px; }
+.minimap-cross-v { height: 100%; width: 1px; }
+
+/* Robot Center Icon */
+.minimap-robot {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.minimap-robot svg {
+  width: 100%;
+  height: 100%;
+  fill: var(--red-primary);
+  filter: drop-shadow(0 0 4px var(--red-primary));
+}
+
+.robot-sweep-radar {
+  position: absolute;
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  border-top: 2px solid var(--red-primary);
+  animation: radar-sweep 2.5s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.minimap-label {
+  position: absolute;
+  bottom: 2px;
+  right: 4px;
+  font-size: 0.52rem;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.5);
+  letter-spacing: 0.5px;
+}
+
+/* Real-Time Logs (Extending from minimap bottom to screen bottom with linear opacity) */
+.logs-container {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-dark);
+  padding: 4px 6px;
+  overflow: hidden;
+}
+
+.logs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.58rem;
+  font-weight: 800;
+  color: var(--black-solid);
+  border-bottom: 1px solid var(--border-light);
+  padding-bottom: 2px;
+  margin-bottom: 3px;
+}
+
+.logs-stream-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--green-ok);
+  animation: pulse-dot 1s infinite;
+}
+
+/* Linear opacity gradient from bottom (100%) to top (~10%) */
+.logs-scroller {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column-reverse; /* Newest at bottom */
+  overflow-y: auto;
+  gap: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  line-height: 1.25;
+  color: var(--text-dark);
+  mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 40%, rgba(0,0,0,0.45) 80%, rgba(0,0,0,0.08) 100%);
+  -webkit-mask-image: linear-gradient(to top, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 40%, rgba(0,0,0,0.45) 80%, rgba(0,0,0,0.08) 100%);
+}
+
+.log-line {
+  word-break: break-all;
+}
+
+.log-line.error { color: var(--red-primary); font-weight: 700; }
+.log-line.info { color: #1e293b; }
