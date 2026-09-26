@@ -1,5 +1,5 @@
 // ESP32 RC Car Service Worker - Resilient Cache-First Strategy
-const CACHE_NAME = 'esp32-rc-v2.1.0';
+const CACHE_NAME = 'esp32-rc-v2.2.0';
 
 const STATIC_ASSETS = [
   './',

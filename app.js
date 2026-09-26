@@ -92,6 +92,9 @@ class WebBluetoothRC {
 
       // Right Elements (Minimap & Logs)
       minimapBox: document.getElementById('minimapBox'),
+      minimapIrLeft: document.getElementById('minimapIrLeft'),
+      minimapIrRight: document.getElementById('minimapIrRight'),
+      minimapServoCone: document.getElementById('minimapServoCone'),
       terminalLog: document.getElementById('terminalLog')
     };
   }
@@ -279,7 +282,7 @@ class WebBluetoothRC {
       this.pingStartTime = 0;
     }
 
-    // Parse packet: "T:<uptime>,<dist_cm>,<mode>"
+    // Parse packet: "T:<uptime>,<dist_cm>,<mode>,<ir_left>,<ir_right>,<servo_angle>"
     if (message.startsWith('T:')) {
       const parts = message.substring(2).split(',');
       if (parts.length >= 3) {
@@ -295,6 +298,22 @@ class WebBluetoothRC {
 
         if (mode === 'A' && this.driveMode !== 'AUTOMATIC') this.setDriveMode('AUTOMATIC');
         else if (mode === 'M' && this.driveMode !== 'MANUAL') this.setDriveMode('MANUAL');
+
+        // Parse IR Sensor states (1 = Blocked, 0 = Clear)
+        if (parts.length >= 5) {
+          const irLeft = parseInt(parts[3], 10);
+          const irRight = parseInt(parts[4], 10);
+          if (this.el.minimapIrLeft) this.el.minimapIrLeft.classList.toggle('blocked', irLeft === 1);
+          if (this.el.minimapIrRight) this.el.minimapIrRight.classList.toggle('blocked', irRight === 1);
+        }
+
+        // Parse Servo Angle (30 to 150 deg)
+        if (parts.length >= 6 && this.el.minimapServoCone) {
+          const servoAngle = parseInt(parts[5], 10);
+          // 90deg center = 0deg relative, 150deg left = -60deg, 30deg right = +60deg
+          const relAngle = -(servoAngle - 90);
+          this.el.minimapServoCone.style.transform = `rotate(${relAngle}deg)`;
+        }
       }
     } else {
       this.log(`ESP32: ${message}`);

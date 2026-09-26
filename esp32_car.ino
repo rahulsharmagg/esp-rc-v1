@@ -1,424 +1,423 @@
 /**
  * ============================================================================
- * Project: ESP32 BLE RC Car Firmware (Nordic UART Service) + AUTONOMOUS DRIVE
- * Author: Antigravity Embedded Systems
- * Hardware: ESP32 Dev Module + Motor Driver + Ultrasonic Sensor (HC-SR04)
- * Communication: Web Bluetooth Low Energy (BLE GATT Server)
- * ============================================================================
+ * Project: ESP32 BLE RC & Autonomous Obstacle-Avoiding Robot
+ * Hardware:
+ *   - ESP32 Dev Board (Core 3.x)
+ *   - L298N Dual H-Bridge Motor Driver
+ *   - SG90 Micro Servo (Pan / Scan)
+ *   - HC-SR04 Ultrasonic Distance Sensor
+ *   - 2x IR Obstacle Sensors (Left & Right)
  * 
- * BLE UUID Configuration:
- *   Service UUID:            6E400001-B5A3-F393-E0A9-E50E24DCCA9E
- *   Rx Characteristic (W):   6E400002-B5A3-F393-E0A9-E50E24DCCA9E
- *   Tx Characteristic (N):   6E400003-B5A3-F393-E0A9-E50E24DCCA9E
+ * Communication:
+ *   - Web Bluetooth Low Energy (Nordic UART Service)
+ *   - Service UUID: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
+ *   - Rx Characteristic: 6E400002-B5A3-F393-E0A9-E50E24DCCA9E
+ *   - Tx Characteristic: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E
+ * ============================================================================
  */
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <esp_arduino_version.h>
+#include <ESP32Servo.h>
 
 // ============================================================================
-// HARDWARE PIN DEFINITIONS
+// HARDWARE PIN DEFINITIONS (Matched to your wiring)
 // ============================================================================
-// Motor A (Left Side)
-#define MOTOR_LEFT_PWM      18   // PWM / Speed or IN1
-#define MOTOR_LEFT_DIR      19   // Direction or IN2
 
-// Motor B (Right Side)
-#define MOTOR_RIGHT_PWM     22   // PWM / Speed or IN3
-#define MOTOR_RIGHT_DIR     23   // Direction or IN4
+// Left Motor (L298N)
+#define ENA 14  // Left motor PWM
+#define IN1 27  // Left motor direction 1
+#define IN2 26  // Left motor direction 2
 
-// Ultrasonic Sensor (HC-SR04) for Autonomous Driving & Obstacle Avoidance
-#define PIN_TRIG            5    // Ultrasonic Trigger Pin
-#define PIN_ECHO            17   // Ultrasonic Echo Pin
+// Right Motor (L298N)
+#define ENB 25  // Right motor PWM
+#define IN3 33  // Right motor direction 1
+#define IN4 32  // Right motor direction 2
 
-// Optional Accessories
-#define PIN_HEADLIGHTS      13   // LED Headlights
-#define PIN_HORN            12   // Passive / Active Buzzer
-#define PIN_STATUS_LED      2    // Built-in ESP32 LED (State Indicator)
+// Servo
+#define SERVO_PIN 13
 
-// PWM Channel Configurations (ESP32 LEDC)
-#define PWM_FREQ            20000 // 20 kHz (Silent, avoids audible motor whine)
-#define PWM_RESOLUTION      8     // 8-bit resolution (0 - 255)
-#define CH_LEFT_PWM         0
-#define CH_LEFT_DIR         1
-#define CH_RIGHT_PWM        2
-#define CH_RIGHT_DIR        3
+// Ultrasonic Sensor (HC-SR04)
+#define TRIG_PIN 5
+#define ECHO_PIN 18  // Use voltage divider: 5V -> 3.3V
+
+// IR Obstacle Sensors (Input-only GPIOs)
+#define IR_LEFT  34
+#define IR_RIGHT 35
+#define IR_OBSTACLE_STATE LOW // LOW = obstacle detected for most active-low IR modules
 
 // ============================================================================
-// CONSTANTS & FAILSAFE CONFIGURATION
+// PWM & MOTOR TIMINGS
+// ============================================================================
+const int PWM_FREQ = 1000;
+const int PWM_RES  = 8; // 8-bit = 0-255
+
+// Speed Presets
+volatile int currentSpeed = 180;
+const int TURN_SPEED = 170;
+const int SAFE_DISTANCE_CM = 20;
+
+// Autonomous Timings (ms)
+const int IR_BACKWARD_TIME      = 250;
+const int IR_TURN_TIME          = 400;
+const int BOTH_IR_BACKWARD_TIME = 400;
+const int BOTH_IR_TURN_TIME     = 400;
+const int ULTRASONIC_TURN_TIME  = 450;
+
+// Safety failsafe timeout for manual mode
+#define FAILSAFE_TIMEOUT_MS 600
+
+// ============================================================================
+// BLE DEFINITIONS
 // ============================================================================
 #define DEVICE_NAME             "ESP32-RC-CAR"
 #define SERVICE_UUID            "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_RX  "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX  "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
-// Safety: Halt motors if no BLE command received within FAILSAFE_TIMEOUT_MS in manual mode
-#define FAILSAFE_TIMEOUT_MS     600 
+// Servo Object & Positions
+Servo scanServo;
+const int SERVO_CENTER = 90;
+const int SERVO_LEFT   = 150;
+const int SERVO_RIGHT  = 30;
+int currentServoAngle  = SERVO_CENTER;
 
-// Autonomous Thresholds (in cm)
-#define OBSTACLE_STOP_CM        22   // Trigger obstacle avoidance routine
-#define OBSTACLE_SLOW_CM        40   // Slow down approaching obstacle
-
-// ============================================================================
-// OPERATING MODES & STATE MACHINE
-// ============================================================================
+// Operating Modes
 enum DriveMode {
   MODE_MANUAL = 0,
   MODE_AUTO_AVOID = 1,
   MODE_AUTO_PATROL = 2
 };
 
-enum AutoSubState {
-  AUTO_FORWARD,
-  AUTO_BRAKE,
-  AUTO_REVERSE,
-  AUTO_TURN_LEFT,
-  AUTO_TURN_RIGHT
-};
+DriveMode currentMode = MODE_MANUAL;
 
-// ============================================================================
-// GLOBAL STATE VARIABLES
-// ============================================================================
+// BLE Server State
 BLEServer* pServer = nullptr;
 BLECharacteristic* pTxCharacteristic = nullptr;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
 volatile unsigned long lastCommandTimestamp = 0;
-volatile uint8_t currentSpeed = 200;      // 0 to 255
 char lastCommandChar = 'S';
 unsigned long lastTelemetryMillis = 0;
+long lastMeasuredCenterDist = 100;
+bool lastLeftIrBlocked = false;
+bool lastRightIrBlocked = false;
 
-// Autonomous State
-DriveMode currentMode = MODE_MANUAL;
-AutoSubState autoState = AUTO_FORWARD;
-unsigned long autoStateTimer = 0;
-int currentDistanceCm = 100;
-unsigned long lastDistanceScanMillis = 0;
-bool turnDirectionToggle = false; // Alternates left/right turns to avoid corner traps
+// Forward Declarations
+void stopMotors();
+void setSpeeds(int leftSpeed, int rightSpeed);
+void moveForward();
+void moveBackward();
+void turnLeft();
+void turnRight();
+void decideDirectionAndTurn();
+long getDistanceCM();
 
 // ============================================================================
-// MOTOR CONTROL PRIMITIVES (Core 2.x & 3.x Dual-Compatible)
+// MOTOR CONTROL PRIMITIVES
 // ============================================================================
-void initHardware() {
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-  // ESP32 Arduino Core v3.x API
-  ledcAttachChannel(MOTOR_LEFT_PWM, PWM_FREQ, PWM_RESOLUTION, CH_LEFT_PWM);
-  ledcAttachChannel(MOTOR_LEFT_DIR, PWM_FREQ, PWM_RESOLUTION, CH_LEFT_DIR);
-  ledcAttachChannel(MOTOR_RIGHT_PWM, PWM_FREQ, PWM_RESOLUTION, CH_RIGHT_PWM);
-  ledcAttachChannel(MOTOR_RIGHT_DIR, PWM_FREQ, PWM_RESOLUTION, CH_RIGHT_DIR);
-#else
-  // ESP32 Arduino Core v2.x API
-  ledcSetup(CH_LEFT_PWM, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttachPin(MOTOR_LEFT_PWM, CH_LEFT_PWM);
-  ledcSetup(CH_LEFT_DIR, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttachPin(MOTOR_LEFT_DIR, CH_LEFT_DIR);
 
-  ledcSetup(CH_RIGHT_PWM, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttachPin(MOTOR_RIGHT_PWM, CH_RIGHT_PWM);
-  ledcSetup(CH_RIGHT_DIR, PWM_FREQ, PWM_RESOLUTION);
-  ledcAttachPin(MOTOR_RIGHT_DIR, CH_RIGHT_DIR);
-#endif
+void setSpeeds(int leftSpeed, int rightSpeed) {
+  leftSpeed = constrain(leftSpeed, 0, 255);
+  rightSpeed = constrain(rightSpeed, 0, 255);
 
-  pinMode(PIN_HEADLIGHTS, OUTPUT);
-  pinMode(PIN_HORN, OUTPUT);
-  pinMode(PIN_STATUS_LED, OUTPUT);
-  
-  // Ultrasonic Sensor
-  pinMode(PIN_TRIG, OUTPUT);
-  pinMode(PIN_ECHO, INPUT);
-
-  digitalWrite(PIN_TRIG, LOW);
-  digitalWrite(PIN_HEADLIGHTS, LOW);
-  digitalWrite(PIN_HORN, LOW);
-  digitalWrite(PIN_STATUS_LED, LOW);
+  // ESP32 Core 3.x uses pin directly for ledcWrite
+  ledcWrite(ENA, leftSpeed);
+  ledcWrite(ENB, rightSpeed);
 }
 
-// Drive left motor: speed (-255 to +255)
-void setLeftMotor(int speed) {
-  speed = constrain(speed, -255, 255);
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-  if (speed > 0) {
-    ledcWrite(MOTOR_LEFT_PWM, speed);
-    ledcWrite(MOTOR_LEFT_DIR, 0);
-  } else if (speed < 0) {
-    ledcWrite(MOTOR_LEFT_PWM, 0);
-    ledcWrite(MOTOR_LEFT_DIR, -speed);
-  } else {
-    ledcWrite(MOTOR_LEFT_PWM, 0);
-    ledcWrite(MOTOR_LEFT_DIR, 0);
-  }
-#else
-  if (speed > 0) {
-    ledcWrite(CH_LEFT_PWM, speed);
-    ledcWrite(CH_LEFT_DIR, 0);
-  } else if (speed < 0) {
-    ledcWrite(CH_LEFT_PWM, 0);
-    ledcWrite(CH_LEFT_DIR, -speed);
-  } else {
-    ledcWrite(CH_LEFT_PWM, 0);
-    ledcWrite(CH_LEFT_DIR, 0);
-  }
-#endif
+void moveForward() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  setSpeeds(currentSpeed, currentSpeed);
 }
 
-// Drive right motor: speed (-255 to +255)
-void setRightMotor(int speed) {
-  speed = constrain(speed, -255, 255);
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-  if (speed > 0) {
-    ledcWrite(MOTOR_RIGHT_PWM, speed);
-    ledcWrite(MOTOR_RIGHT_DIR, 0);
-  } else if (speed < 0) {
-    ledcWrite(MOTOR_RIGHT_PWM, 0);
-    ledcWrite(MOTOR_RIGHT_DIR, -speed);
-  } else {
-    ledcWrite(MOTOR_RIGHT_PWM, 0);
-    ledcWrite(MOTOR_RIGHT_DIR, 0);
-  }
-#else
-  if (speed > 0) {
-    ledcWrite(CH_RIGHT_PWM, speed);
-    ledcWrite(CH_RIGHT_DIR, 0);
-  } else if (speed < 0) {
-    ledcWrite(CH_RIGHT_PWM, 0);
-    ledcWrite(CH_RIGHT_DIR, -speed);
-  } else {
-    ledcWrite(CH_RIGHT_PWM, 0);
-    ledcWrite(CH_RIGHT_DIR, 0);
-  }
-#endif
+void moveBackward() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+  setSpeeds(currentSpeed, currentSpeed);
+}
+
+void turnLeft() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  setSpeeds(TURN_SPEED, TURN_SPEED);
+}
+
+void turnRight() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+  setSpeeds(TURN_SPEED, TURN_SPEED);
+}
+
+void forwardLeft() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  setSpeeds(currentSpeed / 2, currentSpeed);
+}
+
+void forwardRight() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  setSpeeds(currentSpeed, currentSpeed / 2);
+}
+
+void reverseLeft() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+  setSpeeds(currentSpeed / 2, currentSpeed);
+}
+
+void reverseRight() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+  setSpeeds(currentSpeed, currentSpeed / 2);
 }
 
 void stopMotors() {
-  setLeftMotor(0);
-  setRightMotor(0);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+  setSpeeds(0, 0);
+}
+
+// Drive differential / tank style: left (-255 to +255), right (-255 to +255)
+void setDifferential(int left, int right) {
+  left = constrain(left, -255, 255);
+  right = constrain(right, -255, 255);
+
+  if (left > 0) {
+    digitalWrite(IN1, HIGH);
+    digitalWrite(IN2, LOW);
+  } else if (left < 0) {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, HIGH);
+  } else {
+    digitalWrite(IN1, LOW);
+    digitalWrite(IN2, LOW);
+  }
+
+  if (right > 0) {
+    digitalWrite(IN3, HIGH);
+    digitalWrite(IN4, LOW);
+  } else if (right < 0) {
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, HIGH);
+  } else {
+    digitalWrite(IN3, LOW);
+    digitalWrite(IN4, LOW);
+  }
+
+  setSpeeds(abs(left), abs(right));
 }
 
 // ============================================================================
-// ULTRASONIC SENSOR READING
+// ULTRASONIC DISTANCE SENSOR
 // ============================================================================
-int readUltrasonicDistance() {
-  digitalWrite(PIN_TRIG, LOW);
+
+long getDistanceCM() {
+  digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
-  digitalWrite(PIN_TRIG, HIGH);
+  digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
-  digitalWrite(PIN_TRIG, LOW);
+  digitalWrite(TRIG_PIN, LOW);
 
-  // Timeout after 18ms (~300cm max range) to avoid blocking loop
-  long duration = pulseIn(PIN_ECHO, HIGH, 18000);
+  long duration = pulseIn(ECHO_PIN, HIGH, 25000); // 25ms timeout (~400cm)
   if (duration == 0) {
-    return 300; // No obstacle within range
+    return -1;
   }
-  int cm = (int)(duration * 0.0343 / 2);
-  if (cm <= 0 || cm > 300) return 300;
-  return cm;
+  return (long)(duration * 0.0343 / 2);
 }
 
 // ============================================================================
-// AUTONOMOUS DRIVING DECISION ENGINE
+// ULTRASONIC & SERVO DECISION LOGIC (Look Left, Look Right)
 // ============================================================================
-void handleAutonomousAvoidance() {
-  unsigned long now = millis();
-  int speed = currentSpeed;
-  int cruiseSpeed = min(speed, 180); // Moderate speed for autonomous safety
 
-  switch (autoState) {
-    case AUTO_FORWARD:
-      if (currentDistanceCm <= OBSTACLE_STOP_CM) {
-        // Obstacle detected! Immediate brake
-        stopMotors();
-        autoState = AUTO_BRAKE;
-        autoStateTimer = now;
-      } else if (currentDistanceCm <= OBSTACLE_SLOW_CM) {
-        // Approaching obstacle: Slow down
-        int slowSpeed = map(currentDistanceCm, OBSTACLE_STOP_CM, OBSTACLE_SLOW_CM, 110, cruiseSpeed);
-        setLeftMotor(slowSpeed);
-        setRightMotor(slowSpeed);
-      } else {
-        // Clear path: Normal forward cruise
-        setLeftMotor(cruiseSpeed);
-        setRightMotor(cruiseSpeed);
-      }
-      break;
+void decideDirectionAndTurn() {
+  long leftDist;
+  long rightDist;
 
-    case AUTO_BRAKE:
-      stopMotors();
-      if (now - autoStateTimer > 150) {
-        // Reverse slightly to create maneuvering clearance
-        autoState = AUTO_REVERSE;
-        autoStateTimer = now;
-      }
-      break;
+  // 1. Look LEFT
+  scanServo.write(SERVO_LEFT);
+  currentServoAngle = SERVO_LEFT;
+  delay(350);
+  leftDist = getDistanceCM();
 
-    case AUTO_REVERSE:
-      setLeftMotor(-cruiseSpeed);
-      setRightMotor(-cruiseSpeed);
-      if (now - autoStateTimer > 350) {
-        stopMotors();
-        // Alternate turns or turn towards clearer side
-        turnDirectionToggle = !turnDirectionToggle;
-        autoState = turnDirectionToggle ? AUTO_TURN_LEFT : AUTO_TURN_RIGHT;
-        autoStateTimer = now;
-      }
-      break;
+  // 2. Look RIGHT
+  scanServo.write(SERVO_RIGHT);
+  currentServoAngle = SERVO_RIGHT;
+  delay(500);
+  rightDist = getDistanceCM();
 
-    case AUTO_TURN_LEFT:
-      setLeftMotor(-cruiseSpeed);
-      setRightMotor(cruiseSpeed);
-      if (now - autoStateTimer > 400) {
-        stopMotors();
-        autoState = AUTO_FORWARD;
-      }
-      break;
+  // 3. Return to CENTER
+  scanServo.write(SERVO_CENTER);
+  currentServoAngle = SERVO_CENTER;
+  delay(300);
 
-    case AUTO_TURN_RIGHT:
-      setLeftMotor(cruiseSpeed);
-      setRightMotor(-cruiseSpeed);
-      if (now - autoStateTimer > 400) {
-        stopMotors();
-        autoState = AUTO_FORWARD;
-      }
-      break;
+  if (leftDist < 0) leftDist = 400;
+  if (rightDist < 0) rightDist = 400;
+
+  Serial.printf("[AUTO SCAN] Left: %ld cm | Right: %ld cm\n", leftDist, rightDist);
+
+  // Turn towards the clearer direction
+  if (leftDist > rightDist) {
+    Serial.println("[AUTO] Decision -> Turning LEFT");
+    turnLeft();
+    delay(ULTRASONIC_TURN_TIME);
+  } else {
+    Serial.println("[AUTO] Decision -> Turning RIGHT");
+    turnRight();
+    delay(ULTRASONIC_TURN_TIME);
   }
+
+  stopMotors();
 }
 
-void handleAutonomousPatrol() {
-  unsigned long now = millis();
-  int speed = min((int)currentSpeed, 170);
+// ============================================================================
+// AUTONOMOUS ROUTINE (Priority: IR Dual -> IR Left -> IR Right -> Ultrasonic)
+// ============================================================================
 
-  // Safety collision check even during patrol
-  if (currentDistanceCm <= OBSTACLE_STOP_CM) {
+void runAutonomousObstacleAvoidance() {
+  // 1. Read IR Sensors
+  bool leftBlocked  = (digitalRead(IR_LEFT) == IR_OBSTACLE_STATE);
+  bool rightBlocked = (digitalRead(IR_RIGHT) == IR_OBSTACLE_STATE);
+  lastLeftIrBlocked = leftBlocked;
+  lastRightIrBlocked = rightBlocked;
+
+  // 2. Read Ultrasonic Distance
+  long distanceCenter = getDistanceCM();
+  if (distanceCenter > 0) lastMeasuredCenterDist = distanceCenter;
+
+  // PRIORITY 1: Both IR Sensors Blocked
+  if (leftBlocked && rightBlocked) {
+    Serial.println("[AUTO] Both IR sensors blocked!");
     stopMotors();
-    autoState = AUTO_BRAKE;
-    currentMode = MODE_AUTO_AVOID;
+    moveBackward();
+    delay(BOTH_IR_BACKWARD_TIME);
+    turnRight();
+    delay(BOTH_IR_TURN_TIME);
+    stopMotors();
     return;
   }
 
-  // 8-second repeating patrol pattern (Forward 2s -> Turn Left 0.6s -> Forward 2s -> Turn Right 0.6s)
-  unsigned long patternTime = (now - autoStateTimer) % 6000;
-  if (patternTime < 2200) {
-    setLeftMotor(speed);
-    setRightMotor(speed); // Forward
-  } else if (patternTime < 3000) {
-    setLeftMotor(-speed);
-    setRightMotor(speed); // Turn Left
-  } else if (patternTime < 5200) {
-    setLeftMotor(speed);
-    setRightMotor(speed); // Forward
-  } else {
-    setLeftMotor(speed);
-    setRightMotor(-speed); // Turn Right
+  // PRIORITY 2: Left IR Sensor Blocked
+  if (leftBlocked) {
+    Serial.println("[AUTO] Left IR blocked!");
+    stopMotors();
+    moveBackward();
+    delay(IR_BACKWARD_TIME);
+    turnRight();
+    delay(IR_TURN_TIME);
+    stopMotors();
+    return;
   }
+
+  // PRIORITY 3: Right IR Sensor Blocked
+  if (rightBlocked) {
+    Serial.println("[AUTO] Right IR blocked!");
+    stopMotors();
+    moveBackward();
+    delay(IR_BACKWARD_TIME);
+    turnLeft();
+    delay(IR_TURN_TIME);
+    stopMotors();
+    return;
+  }
+
+  // PRIORITY 4: Ultrasonic Center Detection (< 20 cm)
+  if (distanceCenter > 0 && distanceCenter < SAFE_DISTANCE_CM) {
+    Serial.println("[AUTO] Ultrasonic obstacle detected!");
+    stopMotors();
+    decideDirectionAndTurn();
+    return;
+  }
+
+  // Path Clear -> Cruise Forward
+  moveForward();
+  delay(20);
 }
 
 // ============================================================================
-// MOTION COMMAND HANDLER
+// MOTION & BLUETOOTH COMMAND HANDLER
 // ============================================================================
+
 void processCommand(const String& cmd) {
   if (cmd.length() == 0) return;
 
   lastCommandTimestamp = millis();
   char c = cmd.charAt(0);
 
-  // Autonomous Mode Controls
-  if (c == 'A') { // Engage Auto Obstacle Avoidance
+  // 1. Mode Selection Commands
+  if (c == 'A') {
     currentMode = MODE_AUTO_AVOID;
-    autoState = AUTO_FORWARD;
-    autoStateTimer = millis();
-    Serial.println("[MODE] Autonomous Obstacle Avoidance Engaged.");
+    scanServo.write(SERVO_CENTER);
+    currentServoAngle = SERVO_CENTER;
+    Serial.println("[MODE] Engaged: AUTOMATIC (Obstacle Avoidance)");
     return;
   }
-  if (c == 'a') { // Disengage Auto Mode -> Return to Manual
+  if (c == 'a') {
     currentMode = MODE_MANUAL;
     stopMotors();
-    Serial.println("[MODE] Returned to Manual Control.");
-    return;
-  }
-  if (c == 'P') { // Engage Auto Patrol Mode
-    currentMode = MODE_AUTO_PATROL;
-    autoStateTimer = millis();
-    Serial.println("[MODE] Autonomous Patrol Mode Engaged.");
+    scanServo.write(SERVO_CENTER);
+    currentServoAngle = SERVO_CENTER;
+    Serial.println("[MODE] Engaged: MANUAL");
     return;
   }
 
-  // 1. Speed Adjustment Command (e.g., "V220")
+  // 2. Throttle / Speed Command (e.g. "V200")
   if (c == 'V') {
     int val = cmd.substring(1).toInt();
-    currentSpeed = (uint8_t)constrain(val, 0, 255);
+    currentSpeed = constrain(val, 50, 255);
+    Serial.printf("[CONFIG] Speed set to: %d\n", currentSpeed);
     return;
   }
 
-  // 2. Differential Drive Command (e.g., "D:180,-180")
+  // 3. Differential Tank Drive (e.g. "D:180,-180")
   if (c == 'D' && cmd.charAt(1) == ':') {
-    currentMode = MODE_MANUAL; // Manual input cancels autonomous mode
+    currentMode = MODE_MANUAL;
     int commaIdx = cmd.indexOf(',');
     if (commaIdx > 2) {
       int leftPwr = cmd.substring(2, commaIdx).toInt();
       int rightPwr = cmd.substring(commaIdx + 1).toInt();
-      setLeftMotor(leftPwr);
-      setRightMotor(rightPwr);
+      setDifferential(leftPwr, rightPwr);
       return;
     }
   }
 
-  // 3. Accessory Commands
-  if (c == 'W') { digitalWrite(PIN_HEADLIGHTS, HIGH); return; }
-  if (c == 'w') { digitalWrite(PIN_HEADLIGHTS, LOW);  return; }
-  if (c == 'U') { digitalWrite(PIN_HORN, HIGH);        return; }
-  if (c == 'u') { digitalWrite(PIN_HORN, LOW);         return; }
-
-  // 4. Directional Matrix (Manual Mode)
-  // Any directional input immediately disengages autonomous modes
+  // 4. Directional Motion Commands (Manual Touch Inputs)
   currentMode = MODE_MANUAL;
   lastCommandChar = c;
-  int spd = currentSpeed;
-  int halfSpd = currentSpeed / 2;
 
   switch (c) {
-    case 'F': // Forward
-      setLeftMotor(spd);
-      setRightMotor(spd);
-      break;
-
-    case 'B': // Reverse
-      setLeftMotor(-spd);
-      setRightMotor(-spd);
-      break;
-
-    case 'L': // Spin Left (Zero turn)
-      setLeftMotor(-spd);
-      setRightMotor(spd);
-      break;
-
-    case 'R': // Spin Right (Zero turn)
-      setLeftMotor(spd);
-      setRightMotor(-spd);
-      break;
-
-    case 'G': // Forward-Left (Arc Turn)
-      setLeftMotor(halfSpd);
-      setRightMotor(spd);
-      break;
-
-    case 'I': // Forward-Right (Arc Turn)
-      setLeftMotor(spd);
-      setRightMotor(halfSpd);
-      break;
-
-    case 'H': // Reverse-Left
-      setLeftMotor(-halfSpd);
-      setRightMotor(-spd);
-      break;
-
-    case 'J': // Reverse-Right
-      setLeftMotor(-spd);
-      setRightMotor(-halfSpd);
-      break;
-
-    case 'S': // Hard Stop / Brake
+    case 'F': moveForward();   break;
+    case 'B': moveBackward();  break;
+    case 'L': turnLeft();      break;
+    case 'R': turnRight();     break;
+    case 'G': forwardLeft();   break;
+    case 'I': forwardRight();  break;
+    case 'H': reverseLeft();   break;
+    case 'J': reverseRight();  break;
+    case 'S':
     default:
       stopMotors();
       break;
@@ -426,19 +425,18 @@ void processCommand(const String& cmd) {
 }
 
 // ============================================================================
-// BLE CALLBACKS & PROTOCOL
+// BLE CALLBACKS
 // ============================================================================
+
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) override {
     deviceConnected = true;
-    digitalWrite(PIN_STATUS_LED, HIGH);
   }
 
   void onDisconnect(BLEServer* pServer) override {
     deviceConnected = false;
     currentMode = MODE_MANUAL;
-    digitalWrite(PIN_STATUS_LED, LOW);
-    stopMotors(); // Immediate stop on disconnect
+    stopMotors();
   }
 };
 
@@ -450,7 +448,7 @@ class RxCallbacks : public BLECharacteristicCallbacks {
     if (rxValue.length() > 0) {
       processCommand(rxValue);
 
-      // Send telemetry echo back to client for RTT / latency measuring
+      // Latency echo acknowledgment
       if (deviceConnected && pTxCharacteristic) {
         String ack = "ACK:" + rxValue;
         pTxCharacteristic->setValue(ack.c_str());
@@ -461,41 +459,71 @@ class RxCallbacks : public BLECharacteristicCallbacks {
 };
 
 // ============================================================================
-// MAIN SETUP & LOOP
+// MAIN SETUP
 // ============================================================================
+
 void setup() {
   Serial.begin(115200);
   delay(100);
-  Serial.println("\n[ESP32-RC] Initializing System...");
 
-  // Initialize motor channels, pins, and ultrasonic sensor
-  initHardware();
+  Serial.println();
+  Serial.println("==========================================");
+  Serial.println(" ESP32 BLE Obstacle-Avoiding RC Car");
+  Serial.println(" Hardware: L298N + SG90 Servo + HC-SR04 + 2x IR");
+  Serial.println(" Core 3.x | Web Bluetooth Nordic UART");
+  Serial.println("==========================================");
+
+  // 1. Motor direction pins
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  // 2. ESP32 Core 3.x PWM on ENA & ENB
+  ledcAttach(ENA, PWM_FREQ, PWM_RES);
+  ledcAttach(ENB, PWM_FREQ, PWM_RES);
+
+  // 3. Ultrasonic sensor pins
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  digitalWrite(TRIG_PIN, LOW);
+
+  // 4. IR sensors (Input-only pins GPIO34 & GPIO35)
+  pinMode(IR_LEFT, INPUT);
+  pinMode(IR_RIGHT, INPUT);
+
+  // 5. SG90 Servo Configuration
+  scanServo.setPeriodHertz(50);
+  scanServo.attach(SERVO_PIN, 500, 2400);
+  scanServo.write(SERVO_CENTER);
+  delay(400);
+
+  // 6. Stop Motors initially
   stopMotors();
 
-  // Initialize BLE Stack
+  // 7. Initialize BLE Stack
   BLEDevice::init(DEVICE_NAME);
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
 
-  // Create Nordic UART Service
   BLEService* pService = pServer->createService(SERVICE_UUID);
 
-  // Create Tx Characteristic (Notify to Client)
+  // Tx Notify Characteristic
   pTxCharacteristic = pService->createCharacteristic(
     CHARACTERISTIC_UUID_TX,
     BLECharacteristic::PROPERTY_NOTIFY
   );
   pTxCharacteristic->addDescriptor(new BLE2902());
 
-  // Create Rx Characteristic (Write from Client)
+  // Rx Write Characteristic
   BLECharacteristic* pRxCharacteristic = pService->createCharacteristic(
     CHARACTERISTIC_UUID_RX,
     BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
   );
   pRxCharacteristic->setCallbacks(new RxCallbacks());
 
-  // Start Service & Advertising
   pService->start();
+
   BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
@@ -503,39 +531,35 @@ void setup() {
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
 
-  Serial.println("[ESP32-RC] BLE Advertising started. Ready for PWA connection.");
+  Serial.println("[READY] BLE Advertising active. Ready for PWA pairing.");
 }
+
+// ============================================================================
+// MAIN LOOP
+// ============================================================================
 
 void loop() {
   unsigned long currentMillis = millis();
 
-  // 1. Connection Lifecycle & Auto Re-advertising
+  // 1. Auto Re-Advertising on Client Disconnect
   if (!deviceConnected && oldDeviceConnected) {
     delay(200);
     pServer->startAdvertising();
-    Serial.println("[ESP32-RC] Restarted advertising after disconnect.");
+    Serial.println("[BLE] Restarted advertising after disconnect.");
     oldDeviceConnected = deviceConnected;
   }
   if (deviceConnected && !oldDeviceConnected) {
     oldDeviceConnected = deviceConnected;
     lastCommandTimestamp = currentMillis;
     currentMode = MODE_MANUAL;
-    Serial.println("[ESP32-RC] Client successfully linked!");
+    Serial.println("[BLE] Client connected and synchronized!");
   }
 
-  // 2. Periodic Ultrasonic Scan (every 60ms)
-  if (currentMillis - lastDistanceScanMillis >= 60) {
-    lastDistanceScanMillis = currentMillis;
-    currentDistanceCm = readUltrasonicDistance();
-  }
-
-  // 3. Autonomous Drive Execution or Manual Failsafe
+  // 2. Mode Execution: Autonomous vs Manual
   if (currentMode == MODE_AUTO_AVOID) {
-    handleAutonomousAvoidance();
-  } else if (currentMode == MODE_AUTO_PATROL) {
-    handleAutonomousPatrol();
+    runAutonomousObstacleAvoidance();
   } else {
-    // Manual Mode Failsafe: Prevent runaway car if connection drops
+    // Manual Mode Safety: Failsafe stop if command stream stalls
     if (deviceConnected) {
       if (lastCommandChar != 'S' && (currentMillis - lastCommandTimestamp > FAILSAFE_TIMEOUT_MS)) {
         stopMotors();
@@ -546,17 +570,31 @@ void loop() {
     }
   }
 
-  // 4. Telemetry Heartbeat Broadcast (every 250ms when connected)
-  if (deviceConnected && (currentMillis - lastTelemetryMillis >= 250)) {
+  // 3. Telemetry Stream to PWA (every 100ms when connected)
+  if (deviceConnected && (currentMillis - lastTelemetryMillis >= 100)) {
     lastTelemetryMillis = currentMillis;
     unsigned long uptimeSec = currentMillis / 1000;
-    
-    // Telemetry packet: "T:<uptime>,<dist_cm>,<mode>"
-    char modeChar = (currentMode == MODE_AUTO_AVOID) ? 'A' : (currentMode == MODE_AUTO_PATROL ? 'P' : 'M');
-    String telemetry = "T:" + String(uptimeSec) + "," + String(currentDistanceCm) + "," + String(modeChar);
+
+    // Read fast distance in manual mode if idle
+    if (currentMode == MODE_MANUAL && lastCommandChar == 'S') {
+      long d = getDistanceCM();
+      if (d > 0) lastMeasuredCenterDist = d;
+      lastLeftIrBlocked = (digitalRead(IR_LEFT) == IR_OBSTACLE_STATE);
+      lastRightIrBlocked = (digitalRead(IR_RIGHT) == IR_OBSTACLE_STATE);
+    }
+
+    // Packet format: T:<uptime>,<center_dist_cm>,<mode>,<ir_left>,<ir_right>,<servo_angle>
+    char modeChar = (currentMode == MODE_AUTO_AVOID) ? 'A' : 'M';
+    String telemetry = "T:" + String(uptimeSec) + "," +
+                       String(lastMeasuredCenterDist) + "," +
+                       String(modeChar) + "," +
+                       String(lastLeftIrBlocked ? 1 : 0) + "," +
+                       String(lastRightIrBlocked ? 1 : 0) + "," +
+                       String(currentServoAngle);
+
     pTxCharacteristic->setValue(telemetry.c_str());
     pTxCharacteristic->notify();
   }
 
-  delay(5); // Yield for FreeRTOS scheduler
+  delay(5);
 }

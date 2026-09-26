@@ -836,6 +836,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
+  z-index: 2;
 }
 
 .minimap-robot svg {
@@ -845,19 +846,43 @@ html, body {
   filter: drop-shadow(0 0 4px var(--red-primary));
 }
 
-.robot-sweep-radar {
+/* Servo Ultrasonic Scanning Cone */
+.minimap-servo-cone {
   position: absolute;
   width: 70px;
   height: 70px;
+  top: calc(50% - 35px);
+  left: calc(50% - 35px);
   border-radius: 50%;
-  border-top: 2px solid var(--red-primary);
-  animation: radar-sweep 2.5s linear infinite;
+  border-top: 3px solid #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+  transform-origin: center center;
+  transform: rotate(0deg); /* 90deg center = 0deg relative, 150deg left = -60deg, 30deg right = +60deg */
+  transition: transform 0.25s ease-out;
   pointer-events: none;
 }
 
-@keyframes radar-sweep {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+/* IR Sensor Indicators on Left & Right */
+.minimap-ir {
+  position: absolute;
+  width: 8px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+  top: 48px;
+  transition: all 0.15s ease;
+  z-index: 3;
+}
+
+.minimap-ir.left { left: 38px; }
+.minimap-ir.right { right: 38px; }
+
+.minimap-ir.blocked {
+  background: var(--red-primary);
+  border-color: #ff4d4d;
+  box-shadow: 0 0 12px var(--red-primary);
+  animation: pulse-danger 0.4s infinite alternate;
 }
 
 .minimap-label {

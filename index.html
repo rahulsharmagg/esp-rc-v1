@@ -246,12 +246,17 @@
             <div class="minimap-rings"></div>
             <div class="minimap-cross-h"></div>
             <div class="minimap-cross-v"></div>
-            <!-- Robot Icon in Center -->
+            
+            <!-- IR Sensor Indicators -->
+            <div class="minimap-ir left" id="minimapIrLeft" title="Left IR Sensor"></div>
+            <div class="minimap-ir right" id="minimapIrRight" title="Right IR Sensor"></div>
+
+            <!-- Robot Icon with Servo Scanner in Center -->
             <div class="minimap-robot">
               <svg viewBox="0 0 24 24" fill="currentColor">
                 <polygon points="12,2 22,20 12,16 2,20"/>
               </svg>
-              <div class="robot-sweep-radar"></div>
+              <div class="minimap-servo-cone" id="minimapServoCone"></div>
             </div>
             <span class="minimap-label">MINIMAP 150×150</span>
           </div>
