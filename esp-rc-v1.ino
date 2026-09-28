@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Project: ESP32 BLE RC & Autonomous Obstacle-Avoiding Robot (esp-rc-v1)
+ * Project: ESP32 BLE RC & Autonomous Obstacle-Avoiding Robot (esp32_car)
  * Hardware:
  *   - ESP32 Dev Board (Core 3.x)
  *   - L298N Dual H-Bridge Motor Driver
@@ -21,9 +21,17 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <ESP32Servo.h>
+#include <WiFi.h>
+
+// Wi-Fi Power & Connection State (Defaults OFF to maximize battery life)
+bool wifiRadioEnabled = false;
+String activeConnectedSsid = "";
+String targetConnectingSsid = "";
+unsigned long wifiConnectStartTime = 0;
+bool isConnectingWifi = false;
 
 // ============================================================================
-// HARDWARE PIN DEFINITIONS (Matched to your wiring)
+// HARDWARE PIN DEFINITIONS
 // ============================================================================
 
 // Left Motor (L298N)
@@ -48,6 +56,27 @@
 #define IR_RIGHT 35
 #define IR_OBSTACLE_STATE LOW // LOW = obstacle detected for most active-low IR modules
 
+// Battery Voltage Monitoring (ADC1 GPIO 36 / VP)
+#define BATTERY_PIN 36
+const float BATTERY_DIVIDER_RATIO = 2.0; // 1:1 voltage divider (e.g. 2x 10k resistors)
+const float BATTERY_FULL_V        = 8.4; // 2S Li-ion Full
+const float BATTERY_EMPTY_V       = 6.4; // 2S Li-ion Cutoff
+
+int getBatteryLevel(float &outVolts) {
+  int raw = analogRead(BATTERY_PIN);
+  float pinV = (raw / 4095.0f) * 3.3f;
+  float batV = pinV * BATTERY_DIVIDER_RATIO;
+
+  // Fallback to nominal 7.8V (85%) if ADC pin is not yet wired / floating low
+  if (raw < 50) {
+    batV = 7.8f;
+  }
+
+  outVolts = batV;
+  int pct = (int)(((batV - BATTERY_EMPTY_V) / (BATTERY_FULL_V - BATTERY_EMPTY_V)) * 100.0f);
+  return constrain(pct, 0, 100);
+}
+
 // ============================================================================
 // PWM & MOTOR TIMINGS
 // ============================================================================
@@ -68,6 +97,14 @@ const int ULTRASONIC_TURN_TIME  = 450;
 
 // Safety failsafe timeout for manual mode
 #define FAILSAFE_TIMEOUT_MS 600
+
+// ============================================================================
+// SENSOR ENABLE/DISABLE REGISTRY
+// ============================================================================
+bool enableUltrasonic = true;
+bool enableServo      = true;
+bool enableIrLeft     = true;
+bool enableIrRight    = true;
 
 // ============================================================================
 // BLE DEFINITIONS
@@ -236,6 +273,8 @@ void setDifferential(int left, int right) {
 // ============================================================================
 
 long getDistanceCM() {
+  if (!enableUltrasonic) return -1;
+
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
@@ -254,6 +293,14 @@ long getDistanceCM() {
 // ============================================================================
 
 void decideDirectionAndTurn() {
+  if (!enableServo || !enableUltrasonic) {
+    // If scanning disabled, default turn right
+    turnRight();
+    delay(ULTRASONIC_TURN_TIME);
+    stopMotors();
+    return;
+  }
+
   long leftDist;
   long rightDist;
 
@@ -298,14 +345,14 @@ void decideDirectionAndTurn() {
 // ============================================================================
 
 void runAutonomousObstacleAvoidance() {
-  // 1. Read IR Sensors
-  bool leftBlocked  = (digitalRead(IR_LEFT) == IR_OBSTACLE_STATE);
-  bool rightBlocked = (digitalRead(IR_RIGHT) == IR_OBSTACLE_STATE);
+  // 1. Read IR Sensors (if enabled)
+  bool leftBlocked  = enableIrLeft ? (digitalRead(IR_LEFT) == IR_OBSTACLE_STATE) : false;
+  bool rightBlocked = enableIrRight ? (digitalRead(IR_RIGHT) == IR_OBSTACLE_STATE) : false;
   lastLeftIrBlocked = leftBlocked;
   lastRightIrBlocked = rightBlocked;
 
-  // 2. Read Ultrasonic Distance
-  long distanceCenter = getDistanceCM();
+  // 2. Read Ultrasonic Distance (if enabled)
+  long distanceCenter = enableUltrasonic ? getDistanceCM() : -1;
   if (distanceCenter > 0) lastMeasuredCenterDist = distanceCenter;
 
   // PRIORITY 1: Both IR Sensors Blocked
@@ -345,7 +392,7 @@ void runAutonomousObstacleAvoidance() {
   }
 
   // PRIORITY 4: Ultrasonic Center Detection (< 20 cm)
-  if (distanceCenter > 0 && distanceCenter < SAFE_DISTANCE_CM) {
+  if (enableUltrasonic && distanceCenter > 0 && distanceCenter < SAFE_DISTANCE_CM) {
     Serial.println("[AUTO] Ultrasonic obstacle detected!");
     stopMotors();
     decideDirectionAndTurn();
@@ -358,6 +405,72 @@ void runAutonomousObstacleAvoidance() {
 }
 
 // ============================================================================
+// WI-FI & BLE NOTIFICATION ROUTINES
+// ============================================================================
+
+void notifyBle(const String& msg) {
+  if (deviceConnected && pTxCharacteristic) {
+    pTxCharacteristic->setValue(msg.c_str());
+    pTxCharacteristic->notify();
+  }
+}
+
+void scanWifiNetworks() {
+  if (!wifiRadioEnabled) {
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+    delay(50);
+    wifiRadioEnabled = true;
+  }
+  Serial.println("[WIFI] Scanning 2.4GHz networks...");
+  int n = WiFi.scanNetworks(false, true);
+  String resp = "WIFI_SCAN:" + String(n) + ":";
+  for (int i = 0; i < n && i < 12; ++i) {
+    if (i > 0) resp += "|";
+    bool enc = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+    resp += WiFi.SSID(i) + "," + String(WiFi.RSSI(i)) + "," + (enc ? "1" : "0");
+  }
+  WiFi.scanDelete();
+  notifyBle(resp);
+  Serial.printf("[WIFI] Scan finished: %d networks found\n", n);
+}
+
+void connectWifi(const String& ssid, const String& pass) {
+  if (!wifiRadioEnabled) {
+    WiFi.mode(WIFI_STA);
+    wifiRadioEnabled = true;
+  }
+  Serial.printf("[WIFI] Connecting to SSID: %s\n", ssid.c_str());
+  targetConnectingSsid = ssid;
+  isConnectingWifi = true;
+  wifiConnectStartTime = millis();
+
+  if (pass.length() > 0) {
+    WiFi.begin(ssid.c_str(), pass.c_str());
+  } else {
+    WiFi.begin(ssid.c_str());
+  }
+}
+
+void disconnectWifi() {
+  WiFi.disconnect(true);
+  activeConnectedSsid = "";
+  isConnectingWifi = false;
+  notifyBle("WIFI_STATUS:DISCONNECTED:0.0.0.0:0:");
+  Serial.println("[WIFI] Disconnected from network.");
+}
+
+void turnWifiRadioOff() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  wifiRadioEnabled = false;
+  activeConnectedSsid = "";
+  isConnectingWifi = false;
+  notifyBle("WIFI_STATUS:OFF:0.0.0.0:0:");
+  Serial.println("[WIFI] Radio POWERED OFF (Battery Saver Active)");
+}
+
+// ============================================================================
 // MOTION & BLUETOOTH COMMAND HANDLER
 // ============================================================================
 
@@ -367,7 +480,87 @@ void processCommand(const String& cmd) {
   lastCommandTimestamp = millis();
   char c = cmd.charAt(0);
 
-  // 1. Mode Selection Commands
+  // 0. Wi-Fi Control Commands (e.g. "WIFI:SCAN", "WIFI:CONN:SSID:PASS", "WIFI:OFF")
+  if (cmd.startsWith("WIFI:")) {
+    String sub = cmd.substring(5);
+    if (sub == "SCAN") {
+      scanWifiNetworks();
+    } else if (sub.startsWith("CONN:")) {
+      int secondColon = sub.indexOf(':', 5);
+      String ssid, pass;
+      if (secondColon != -1) {
+        ssid = sub.substring(5, secondColon);
+        pass = sub.substring(secondColon + 1);
+      } else {
+        ssid = sub.substring(5);
+        pass = "";
+      }
+      connectWifi(ssid, pass);
+    } else if (sub == "DISC") {
+      disconnectWifi();
+    } else if (sub == "OFF") {
+      turnWifiRadioOff();
+    } else if (sub == "ON") {
+      if (!wifiRadioEnabled) {
+        WiFi.mode(WIFI_STA);
+        wifiRadioEnabled = true;
+        notifyBle("WIFI_STATUS:DISCONNECTED:0.0.0.0:0:");
+      }
+    } else if (sub == "STATUS") {
+      if (!wifiRadioEnabled) {
+        notifyBle("WIFI_STATUS:OFF:0.0.0.0:0:");
+      } else if (WiFi.status() == WL_CONNECTED) {
+        notifyBle("WIFI_STATUS:CONNECTED:" + WiFi.localIP().toString() + ":" + String(WiFi.RSSI()) + ":" + WiFi.SSID());
+      } else {
+        notifyBle("WIFI_STATUS:DISCONNECTED:0.0.0.0:0:");
+      }
+    }
+    return;
+  }
+
+  // 1. Sensor Enable / Disable Toggles (e.g. "E:US:0", "E:IRL:1")
+  if (c == 'E' && cmd.charAt(1) == ':') {
+    int secondColon = cmd.indexOf(':', 2);
+    if (secondColon != -1) {
+      String sensorKey = cmd.substring(2, secondColon);
+      bool state = cmd.substring(secondColon + 1).toInt() == 1;
+
+      if (sensorKey == "US") {
+        enableUltrasonic = state;
+        Serial.printf("[SENSOR CONFIG] Ultrasonic Sensor: %s\n", state ? "ENABLED" : "DISABLED");
+      } else if (sensorKey == "SRV") {
+        enableServo = state;
+        Serial.printf("[SENSOR CONFIG] SG90 Servo: %s\n", state ? "ENABLED" : "DISABLED");
+      } else if (sensorKey == "IRL") {
+        enableIrLeft = state;
+        Serial.printf("[SENSOR CONFIG] Left IR Sensor: %s\n", state ? "ENABLED" : "DISABLED");
+      } else if (sensorKey == "IRR") {
+        enableIrRight = state;
+        Serial.printf("[SENSOR CONFIG] Right IR Sensor: %s\n", state ? "ENABLED" : "DISABLED");
+      }
+      return;
+    }
+  }
+
+  // 2. Servo Manual Angle Positioning (e.g. "P:90", "P:150")
+  if (c == 'P' && cmd.charAt(1) == ':') {
+    int angle = cmd.substring(2).toInt();
+    angle = constrain(angle, 0, 180);
+    scanServo.write(angle);
+    currentServoAngle = angle;
+    Serial.printf("[SERVO] Manual angle set to %d deg\n", angle);
+    return;
+  }
+
+  // 3. Single Ping Command ("PING")
+  if (cmd == "PING") {
+    long d = getDistanceCM();
+    if (d > 0) lastMeasuredCenterDist = d;
+    Serial.printf("[TEST] Ping result: %ld cm\n", d);
+    return;
+  }
+
+  // 4. Mode Selection Commands
   if (c == 'A') {
     currentMode = MODE_AUTO_AVOID;
     scanServo.write(SERVO_CENTER);
@@ -383,8 +576,13 @@ void processCommand(const String& cmd) {
     Serial.println("[MODE] Engaged: MANUAL");
     return;
   }
+  if (c == 'K') { // Manual Servo Sweep Test Trigger from App
+    Serial.println("[SERVO] Manual Scan Sweep Triggered from App");
+    decideDirectionAndTurn();
+    return;
+  }
 
-  // 2. Throttle / Speed Command (e.g. "V200")
+  // 5. Throttle / Speed Command (e.g. "V200")
   if (c == 'V') {
     int val = cmd.substring(1).toInt();
     currentSpeed = constrain(val, 50, 255);
@@ -392,7 +590,7 @@ void processCommand(const String& cmd) {
     return;
   }
 
-  // 3. Differential Tank Drive (e.g. "D:180,-180")
+  // 6. Differential Tank Drive (e.g. "D:180,-180")
   if (c == 'D' && cmd.charAt(1) == ':') {
     currentMode = MODE_MANUAL;
     int commaIdx = cmd.indexOf(',');
@@ -404,7 +602,7 @@ void processCommand(const String& cmd) {
     }
   }
 
-  // 4. Directional Motion Commands (Manual Touch Inputs)
+  // 7. Directional Motion Commands (Manual Touch Inputs)
   currentMode = MODE_MANUAL;
   lastCommandChar = c;
 
@@ -492,11 +690,23 @@ void setup() {
   pinMode(IR_LEFT, INPUT);
   pinMode(IR_RIGHT, INPUT);
 
-  // 5. SG90 Servo Configuration
+  // 5. SG90 Servo Configuration (Allocate timers for Core 3.x compatibility)
+  ESP32PWM::allocateTimer(0);
+  ESP32PWM::allocateTimer(1);
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
   scanServo.setPeriodHertz(50);
   scanServo.attach(SERVO_PIN, 500, 2400);
-  scanServo.write(SERVO_CENTER);
+
+  // Immediate Startup Sweep Test (Left -> Right -> Center)
+  Serial.println("[SERVO] Testing sweep: LEFT -> RIGHT -> CENTER...");
+  scanServo.write(SERVO_LEFT);
   delay(400);
+  scanServo.write(SERVO_RIGHT);
+  delay(600);
+  scanServo.write(SERVO_CENTER);
+  delay(350);
+  Serial.println("[SERVO] Sweep test complete.");
 
   // 6. Stop Motors initially
   stopMotors();
@@ -531,6 +741,9 @@ void setup() {
   pAdvertising->setMinPreferred(0x12);
   BLEDevice::startAdvertising();
 
+  // 8. Start with Wi-Fi Radio OFF (Battery Saver Mode)
+  WiFi.mode(WIFI_OFF);
+
   Serial.println("[READY] BLE Advertising active. Ready for PWA pairing.");
 }
 
@@ -540,6 +753,22 @@ void setup() {
 
 void loop() {
   unsigned long currentMillis = millis();
+
+  // 0. Wi-Fi Connection State Monitor
+  if (isConnectingWifi && wifiRadioEnabled) {
+    if (WiFi.status() == WL_CONNECTED) {
+      isConnectingWifi = false;
+      activeConnectedSsid = WiFi.SSID();
+      String ip = WiFi.localIP().toString();
+      int rssi = WiFi.RSSI();
+      notifyBle("WIFI_STATUS:CONNECTED:" + ip + ":" + String(rssi) + ":" + activeConnectedSsid);
+      Serial.printf("[WIFI] Connected to %s! IP: %s (RSSI: %d dBm)\n", activeConnectedSsid.c_str(), ip.c_str(), rssi);
+    } else if (currentMillis - wifiConnectStartTime > 12000) {
+      isConnectingWifi = false;
+      notifyBle("WIFI_STATUS:DISCONNECTED:0.0.0.0:0:");
+      Serial.println("[WIFI] Connection timed out / failed.");
+    }
+  }
 
   // 1. Auto Re-Advertising on Client Disconnect
   if (!deviceConnected && oldDeviceConnected) {
@@ -577,20 +806,25 @@ void loop() {
 
     // Read fast distance in manual mode if idle
     if (currentMode == MODE_MANUAL && lastCommandChar == 'S') {
-      long d = getDistanceCM();
+      long d = enableUltrasonic ? getDistanceCM() : -1;
       if (d > 0) lastMeasuredCenterDist = d;
-      lastLeftIrBlocked = (digitalRead(IR_LEFT) == IR_OBSTACLE_STATE);
-      lastRightIrBlocked = (digitalRead(IR_RIGHT) == IR_OBSTACLE_STATE);
+      lastLeftIrBlocked = enableIrLeft ? (digitalRead(IR_LEFT) == IR_OBSTACLE_STATE) : false;
+      lastRightIrBlocked = enableIrRight ? (digitalRead(IR_RIGHT) == IR_OBSTACLE_STATE) : false;
     }
 
-    // Packet format: T:<uptime>,<center_dist_cm>,<mode>,<ir_left>,<ir_right>,<servo_angle>
+    // Packet format: T:<uptime>,<center_dist_cm>,<ir_left>,<ir_right>,<servo_angle>,<battery_pct>,<battery_v>,<mode>
     char modeChar = (currentMode == MODE_AUTO_AVOID) ? 'A' : 'M';
+    float batV = 7.8;
+    int batPct = getBatteryLevel(batV);
+
     String telemetry = "T:" + String(uptimeSec) + "," +
                        String(lastMeasuredCenterDist) + "," +
-                       String(modeChar) + "," +
                        String(lastLeftIrBlocked ? 1 : 0) + "," +
                        String(lastRightIrBlocked ? 1 : 0) + "," +
-                       String(currentServoAngle);
+                       String(currentServoAngle) + "," +
+                       String(batPct) + "," +
+                       String(batV, 2) + "," +
+                       String(modeChar);
 
     pTxCharacteristic->setValue(telemetry.c_str());
     pTxCharacteristic->notify();

@@ -1,30 +1,48 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+import http from 'http';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PORT = process.env.PORT || 8080;
-const PUBLIC_DIR = __dirname;
+const PUBLIC_DIR = path.join(__dirname, 'dist');
+
+if (!fs.existsSync(PUBLIC_DIR)) {
+  console.error('\n⚠️  [ERROR] "dist/" directory not found!');
+  console.error('👉 Please run "npm run build" first to generate the production bundle.\n');
+  process.exit(1);
+}
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
   '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon'
+  '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm'
 };
 
 const server = http.createServer((req, res) => {
-  // Normalize URL path
   let reqPath = req.url.split('?')[0];
   if (reqPath === '/' || reqPath === '') {
     reqPath = '/index.html';
   }
 
   const safePath = path.normalize(reqPath).replace(/^(\.\.[\/\\])+/, '');
-  const filePath = path.join(PUBLIC_DIR, safePath);
+  let filePath = path.join(PUBLIC_DIR, safePath);
+
+  // If path doesn't exist, fallback to index.html for SPA routing
+  if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    filePath = path.join(PUBLIC_DIR, 'index.html');
+  }
 
   fs.stat(filePath, (err, stats) => {
     if (err || !stats.isFile()) {
@@ -36,10 +54,15 @@ const server = http.createServer((req, res) => {
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
 
-    // Set headers suitable for PWA and Web Bluetooth testing
+    // Instant update cache rules
+    let cacheControl = 'public, max-age=31536000, immutable';
+    if (ext === '.html' || filePath.endsWith('sw.js') || ext === '.webmanifest' || filePath.endsWith('registerSW.js')) {
+      cacheControl = 'no-cache, no-store, must-revalidate, max-age=0';
+    }
+
     res.writeHead(200, {
       'Content-Type': contentType,
-      'Cache-Control': 'no-cache',
+      'Cache-Control': cacheControl,
       'Access-Control-Allow-Origin': '*'
     });
 
