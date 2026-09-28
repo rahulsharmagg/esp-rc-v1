@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:push": "node scripts/deploy-build.js",
     "preview": "vite preview",
     "serve": "node server.js",
     "check": "svelte-check --tsconfig ./tsconfig.json"
