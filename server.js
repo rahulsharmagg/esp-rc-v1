@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const PORT = parseInt(process.env.PORT || '8080', 10);
 const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'dist')) 
   ? path.join(__dirname, 'dist') 
   : __dirname;
