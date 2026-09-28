@@ -56,9 +56,12 @@ bool isConnectingWifi = false;
 #define IR_RIGHT 35
 #define IR_OBSTACLE_STATE LOW // LOW = obstacle detected for most active-low IR modules
 
-// Dual Headlight LEDs (Left & Right Headlight LEDs)
-#define LED_LEFT_PIN   2   // Left Headlight LED (GPIO 2)
-#define LED_RIGHT_PIN  4   // Right Headlight LED (GPIO 4)
+// Onboard ESP32 Status / Bluetooth Indicator LED (Solid ON = Connected | Blinking = Searching)
+#define STATUS_LED_PIN 2
+
+// Dual Headlight LEDs (Left & Right Front LEDs - Toggled via 'W'/'w')
+#define HEADLIGHT_LEFT_PIN  4   // Left Headlight LED (GPIO 4)
+#define HEADLIGHT_RIGHT_PIN 15  // Right Headlight LED (GPIO 15)
 bool isHeadlightsOn = false;
 
 // Horn / Active Buzzer
@@ -277,15 +280,35 @@ void setDifferential(int left, int right) {
 }
 
 // ============================================================================
-// DUAL HEADLIGHT LEDS & HORN ACTUATORS
+// STATUS LED, DUAL HEADLIGHT LEDS & HORN ACTUATORS
 // ============================================================================
+
+// Non-blocking Status LED Blink State
+unsigned long lastStatusLedBlinkMillis = 0;
+bool statusLedBlinkState = false;
+const unsigned long STATUS_LED_BLINK_INTERVAL_MS = 350;
+
+void updateStatusLed() {
+  if (deviceConnected) {
+    // Bluetooth Connected -> Solid ON
+    digitalWrite(STATUS_LED_PIN, HIGH);
+  } else {
+    // Bluetooth Disconnected / Searching -> Blink
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastStatusLedBlinkMillis >= STATUS_LED_BLINK_INTERVAL_MS) {
+      lastStatusLedBlinkMillis = currentMillis;
+      statusLedBlinkState = !statusLedBlinkState;
+      digitalWrite(STATUS_LED_PIN, statusLedBlinkState ? HIGH : LOW);
+    }
+  }
+}
 
 void setHeadlights(bool on) {
   isHeadlightsOn = on;
-  digitalWrite(LED_LEFT_PIN, on ? HIGH : LOW);
-  digitalWrite(LED_RIGHT_PIN, on ? HIGH : LOW);
+  digitalWrite(HEADLIGHT_LEFT_PIN, on ? HIGH : LOW);
+  digitalWrite(HEADLIGHT_RIGHT_PIN, on ? HIGH : LOW);
   Serial.printf("[LIGHTS] Dual Headlights: %s (LED 1: GPIO %d | LED 2: GPIO %d)\n",
-                on ? "ON" : "OFF", LED_LEFT_PIN, LED_RIGHT_PIN);
+                on ? "ON" : "OFF", HEADLIGHT_LEFT_PIN, HEADLIGHT_RIGHT_PIN);
 }
 
 void setHorn(bool on) {
@@ -753,9 +776,12 @@ void setup() {
   delay(350);
   Serial.println("[SERVO] Sweep test complete.");
 
-  // 6. Dual Headlight LEDs & Buzzer Initialization
-  pinMode(LED_LEFT_PIN, OUTPUT);
-  pinMode(LED_RIGHT_PIN, OUTPUT);
+  // 6. Bluetooth Status LED, Dual Headlight LEDs & Buzzer Initialization
+  pinMode(STATUS_LED_PIN, OUTPUT);
+  digitalWrite(STATUS_LED_PIN, LOW);
+
+  pinMode(HEADLIGHT_LEFT_PIN, OUTPUT);
+  pinMode(HEADLIGHT_RIGHT_PIN, OUTPUT);
   setHeadlights(false);
 
   pinMode(BUZZER_PIN, OUTPUT);
@@ -807,7 +833,10 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
-  // 0. Wi-Fi Connection State Monitor
+  // 0. Non-blocking Bluetooth Status LED Update (Solid when connected, Blinks when searching)
+  updateStatusLed();
+
+  // 1. Wi-Fi Connection State Monitor
   if (isConnectingWifi && wifiRadioEnabled) {
     if (WiFi.status() == WL_CONNECTED) {
       isConnectingWifi = false;

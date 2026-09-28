@@ -68,8 +68,10 @@ ESP-RC provides a responsive cockpit interface built with Svelte 5 and TypeScrip
 |   GPIO 34  <------------------------- Left IR Obstacle Sensor   |
 |   GPIO 35  <------------------------- Right IR Obstacle Sensor  |
 |                                                                 |
-|   GPIO 2   -------------------------> Headlight LED 1 (Left)    |
-|   GPIO 4   -------------------------> Headlight LED 2 (Right)   |
+|   GPIO 2   -------------------------> Onboard Bluetooth LED     |
+|                                       (Solid=Connected, Blink)  |
+|   GPIO 4   -------------------------> Headlight LED 1 (Left)    |
+|   GPIO 15  -------------------------> Headlight LED 2 (Right)   |
 |   GPIO 12  -------------------------> Horn / Active Buzzer (+)  |
 |   GPIO 36  <------------------------- Battery ADC Voltage Sense |
 |                                                                 |
