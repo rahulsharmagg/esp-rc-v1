@@ -6,14 +6,9 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = process.env.PORT || 8080;
-const PUBLIC_DIR = path.join(__dirname, 'dist');
-
-if (!fs.existsSync(PUBLIC_DIR)) {
-  console.error('\n⚠️  [ERROR] "dist/" directory not found!');
-  console.error('👉 Please run "npm run build" first to generate the production bundle.\n');
-  process.exit(1);
-}
+const PUBLIC_DIR = fs.existsSync(path.join(__dirname, 'dist')) 
+  ? path.join(__dirname, 'dist') 
+  : __dirname;
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
