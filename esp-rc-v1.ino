@@ -56,6 +56,14 @@ bool isConnectingWifi = false;
 #define IR_RIGHT 35
 #define IR_OBSTACLE_STATE LOW // LOW = obstacle detected for most active-low IR modules
 
+// Dual Headlight LEDs (Left & Right Headlight LEDs)
+#define LED_LEFT_PIN   2   // Left Headlight LED (GPIO 2)
+#define LED_RIGHT_PIN  4   // Right Headlight LED (GPIO 4)
+bool isHeadlightsOn = false;
+
+// Horn / Active Buzzer
+#define BUZZER_PIN     12
+
 // Battery Voltage Monitoring (ADC1 GPIO 36 / VP)
 #define BATTERY_PIN 36
 const float BATTERY_DIVIDER_RATIO = 2.0; // 1:1 voltage divider (e.g. 2x 10k resistors)
@@ -266,6 +274,23 @@ void setDifferential(int left, int right) {
   }
 
   setSpeeds(abs(left), abs(right));
+}
+
+// ============================================================================
+// DUAL HEADLIGHT LEDS & HORN ACTUATORS
+// ============================================================================
+
+void setHeadlights(bool on) {
+  isHeadlightsOn = on;
+  digitalWrite(LED_LEFT_PIN, on ? HIGH : LOW);
+  digitalWrite(LED_RIGHT_PIN, on ? HIGH : LOW);
+  Serial.printf("[LIGHTS] Dual Headlights: %s (LED 1: GPIO %d | LED 2: GPIO %d)\n",
+                on ? "ON" : "OFF", LED_LEFT_PIN, LED_RIGHT_PIN);
+}
+
+void setHorn(bool on) {
+  digitalWrite(BUZZER_PIN, on ? HIGH : LOW);
+  Serial.printf("[HORN] Buzzer: %s (GPIO %d)\n", on ? "ON" : "OFF", BUZZER_PIN);
 }
 
 // ============================================================================
@@ -582,7 +607,27 @@ void processCommand(const String& cmd) {
     return;
   }
 
-  // 5. Throttle / Speed Command (e.g. "V200")
+  // 5. Dual Headlight LEDs Toggle ('W' = ON, 'w' = OFF)
+  if (c == 'W') {
+    setHeadlights(true);
+    return;
+  }
+  if (c == 'w') {
+    setHeadlights(false);
+    return;
+  }
+
+  // 6. Horn Buzzer ('U' = Sound ON, 'u' = Sound OFF)
+  if (c == 'U') {
+    setHorn(true);
+    return;
+  }
+  if (c == 'u') {
+    setHorn(false);
+    return;
+  }
+
+  // 7. Throttle / Speed Command (e.g. "V200")
   if (c == 'V') {
     int val = cmd.substring(1).toInt();
     currentSpeed = constrain(val, 50, 255);
@@ -590,7 +635,7 @@ void processCommand(const String& cmd) {
     return;
   }
 
-  // 6. Differential Tank Drive (e.g. "D:180,-180")
+  // 8. Differential Tank Drive (e.g. "D:180,-180")
   if (c == 'D' && cmd.charAt(1) == ':') {
     currentMode = MODE_MANUAL;
     int commaIdx = cmd.indexOf(',');
@@ -708,10 +753,18 @@ void setup() {
   delay(350);
   Serial.println("[SERVO] Sweep test complete.");
 
-  // 6. Stop Motors initially
+  // 6. Dual Headlight LEDs & Buzzer Initialization
+  pinMode(LED_LEFT_PIN, OUTPUT);
+  pinMode(LED_RIGHT_PIN, OUTPUT);
+  setHeadlights(false);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  setHorn(false);
+
+  // 7. Stop Motors initially
   stopMotors();
 
-  // 7. Initialize BLE Stack
+  // 8. Initialize BLE Stack
   BLEDevice::init(DEVICE_NAME);
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());

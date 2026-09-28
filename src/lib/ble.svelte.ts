@@ -274,7 +274,7 @@ export class BLEController {
 
   setHorn(on: boolean) {
     this.isHornOn = on;
-    this.sendCommand(on ? 'V' : 'v', true);
+    this.sendCommand(on ? 'U' : 'u', true);
     if (on) this.vibrate([20, 20]);
   }
 
