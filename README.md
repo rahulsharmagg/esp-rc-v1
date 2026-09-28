@@ -54,6 +54,7 @@ ESP-RC provides a responsive cockpit interface built with Svelte 5 and TypeScrip
 +-----------------------------------------------------------------+
 |                       ESP32 DevKit V1                           |
 |                                                                 |
+|   [BANK A: Left Header Lower - Motor Driver L298N]              |
 |   GPIO 14  -------------------------> ENA / Motor Left PWM      |
 |   GPIO 27  -------------------------> IN1 / Motor Left DIR 1    |
 |   GPIO 26  -------------------------> IN2 / Motor Left DIR 2    |
@@ -61,19 +62,22 @@ ESP-RC provides a responsive cockpit interface built with Svelte 5 and TypeScrip
 |   GPIO 33  -------------------------> IN3 / Motor Right DIR 1   |
 |   GPIO 32  -------------------------> IN4 / Motor Right DIR 2   |
 |                                                                 |
-|   GPIO 5   -------------------------> HC-SR04 TRIG              |
-|   GPIO 18  <------------------------- HC-SR04 ECHO (via divider)|
-|   GPIO 13  -------------------------> SG90 Servo Signal (PWM)   |
-|                                                                 |
+|   [BANK B: Left Header Upper - Dedicated Input Sensors]         |
+|   GPIO 36  <------------------------- Battery ADC Voltage Sense |
 |   GPIO 34  <------------------------- Left IR Obstacle Sensor   |
 |   GPIO 35  <------------------------- Right IR Obstacle Sensor  |
 |                                                                 |
+|   [BANK C: Right Header Lower - Ultrasonic & Servo Gimbal]      |
+|   GPIO 18  -------------------------> HC-SR04 TRIG (Output)     |
+|   GPIO 19  <------------------------- HC-SR04 ECHO (1k:2k div)  |
+|   GPIO 5   -------------------------> SG90 Pan Servo (PWM)      |
+|                                                                 |
+|   [BANK D: Right Header Upper - Lighting, Audio & Status]       |
+|   GPIO 22  -------------------------> Headlight LED 1 (Left)    |
+|   GPIO 23  -------------------------> Headlight LED 2 (Right)   |
+|   GPIO 21  -------------------------> Horn / Active Buzzer (+)  |
 |   GPIO 2   -------------------------> Onboard Bluetooth LED     |
 |                                       (Solid=Connected, Blink)  |
-|   GPIO 4   -------------------------> Headlight LED 1 (Left)    |
-|   GPIO 15  -------------------------> Headlight LED 2 (Right)   |
-|   GPIO 12  -------------------------> Horn / Active Buzzer (+)  |
-|   GPIO 36  <------------------------- Battery ADC Voltage Sense |
 |                                                                 |
 |   GND      -------------------------> Common Ground             |
 |   VIN (5V) <------------------------- 5V BEC / Motor Regulator  |

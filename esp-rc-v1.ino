@@ -31,44 +31,36 @@ unsigned long wifiConnectStartTime = 0;
 bool isConnectingWifi = false;
 
 // ============================================================================
-// HARDWARE PIN DEFINITIONS
+// HARDWARE PIN DEFINITIONS (Organized by Physical Header Banks)
 // ============================================================================
 
-// Left Motor (L298N)
-#define ENA 14  // Left motor PWM
-#define IN1 27  // Left motor direction 1
-#define IN2 26  // Left motor direction 2
+// --- BANK A (LEFT HEADER LOWER): L298N DUAL MOTOR DRIVER ---
+#define ENA 14  // Left motor PWM (GPIO 14)
+#define IN1 27  // Left motor direction 1 (GPIO 27)
+#define IN2 26  // Left motor direction 2 (GPIO 26)
+#define ENB 25  // Right motor PWM (GPIO 25)
+#define IN3 33  // Right motor direction 1 (GPIO 33)
+#define IN4 32  // Right motor direction 2 (GPIO 32)
 
-// Right Motor (L298N)
-#define ENB 25  // Right motor PWM
-#define IN3 33  // Right motor direction 1
-#define IN4 32  // Right motor direction 2
+// --- BANK B (LEFT HEADER UPPER): DEDICATED INPUT SENSORS ---
+#define BATTERY_PIN 36  // ADC1 GPIO 36 (VP) - 1:1 Voltage divider
+#define IR_LEFT     34  // Left IR Obstacle Sensor (Input-only GPIO 34)
+#define IR_RIGHT    35  // Right IR Obstacle Sensor (Input-only GPIO 35)
+#define IR_OBSTACLE_STATE LOW // LOW = obstacle detected for active-low IR modules
 
-// Servo
-#define SERVO_PIN 13
+// --- BANK C (RIGHT HEADER LOWER): ULTRASONIC SENSOR & PAN SERVO GIMBAL ---
+#define SERVO_PIN 5   // SG90 Pan Servo PWM (GPIO 5)
+#define TRIG_PIN  18  // HC-SR04 TRIG Output (GPIO 18)
+#define ECHO_PIN  19  // HC-SR04 ECHO Input (GPIO 19 via 1k:2k voltage divider)
 
-// Ultrasonic Sensor (HC-SR04)
-#define TRIG_PIN 5
-#define ECHO_PIN 18  // Use voltage divider: 5V -> 3.3V
+// --- BANK D (RIGHT HEADER UPPER): LIGHTING, AUDIO & ONBOARD STATUS ---
+#define HEADLIGHT_LEFT_PIN  22  // Front Left Headlight LED (GPIO 22)
+#define HEADLIGHT_RIGHT_PIN 23  // Front Right Headlight LED (GPIO 23)
+#define BUZZER_PIN          21  // Active Horn Buzzer (GPIO 21)
+#define STATUS_LED_PIN      2   // Built-in Blue Onboard LED (Solid=Connected, Blink=Searching)
 
-// IR Obstacle Sensors (Input-only GPIOs)
-#define IR_LEFT  34
-#define IR_RIGHT 35
-#define IR_OBSTACLE_STATE LOW // LOW = obstacle detected for most active-low IR modules
-
-// Onboard ESP32 Status / Bluetooth Indicator LED (Solid ON = Connected | Blinking = Searching)
-#define STATUS_LED_PIN 2
-
-// Dual Headlight LEDs (Left & Right Front LEDs - Toggled via 'W'/'w')
-#define HEADLIGHT_LEFT_PIN  4   // Left Headlight LED (GPIO 4)
-#define HEADLIGHT_RIGHT_PIN 15  // Right Headlight LED (GPIO 15)
 bool isHeadlightsOn = false;
 
-// Horn / Active Buzzer
-#define BUZZER_PIN     12
-
-// Battery Voltage Monitoring (ADC1 GPIO 36 / VP)
-#define BATTERY_PIN 36
 const float BATTERY_DIVIDER_RATIO = 2.0; // 1:1 voltage divider (e.g. 2x 10k resistors)
 const float BATTERY_FULL_V        = 8.4; // 2S Li-ion Full
 const float BATTERY_EMPTY_V       = 6.4; // 2S Li-ion Cutoff
