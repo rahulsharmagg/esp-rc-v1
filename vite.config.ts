@@ -69,6 +69,9 @@ export default defineConfig({
       }
     })
   ],
+  optimizeDeps: {
+    include: ['@lucide/svelte']
+  },
   server: {
     host: true,
     port: 5173,
