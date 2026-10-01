@@ -27,8 +27,8 @@
 #include <WiFiClientSecure.h>
 
 // Firmware Version & OTA Configuration
-static const char FIRMWARE_VERSION[] = "1.0.2";
-static const char DEFAULT_OTA_URL[]  = "https://raw.githubusercontent.com/rahulsharmagg/esp-rc-v1/main/firmware/esp32/1.0.2/firmware.bin";
+static const char FIRMWARE_VERSION[] = "1.0.3";
+static const char DEFAULT_OTA_URL[]  = "https://raw.githubusercontent.com/rahulsharmagg/esp-rc-v1/main/firmware/esp32/1.0.3/firmware.bin";
 
 // Wi-Fi Power & Connection State (Defaults OFF to maximize battery life)
 bool wifiRadioEnabled = false;

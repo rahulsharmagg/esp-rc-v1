@@ -438,12 +438,19 @@ export class BLEController {
 
       if (latestRes && latestRes.ok) {
         const latest: FirmwareLatestResponse = await latestRes.json();
-        this.latestFirmwareVer = latest.version;
-        this.hasFirmwareUpdate = this.latestFirmwareVer !== this.currentFirmwareVer;
-        this.otaStatus = this.hasFirmwareUpdate ? 'AVAILABLE' : 'IDLE';
-        this.otaMessage = this.hasFirmwareUpdate 
-          ? `New stable firmware v${this.latestFirmwareVer} is available!`
-          : `Firmware is up to date (v${this.currentFirmwareVer}).`;
+        if (latest && latest.version) {
+          this.latestFirmwareVer = latest.version;
+          this.hasFirmwareUpdate = this.latestFirmwareVer !== this.currentFirmwareVer;
+          this.otaStatus = this.hasFirmwareUpdate ? 'AVAILABLE' : 'IDLE';
+          this.otaMessage = this.hasFirmwareUpdate 
+            ? `New stable firmware v${this.latestFirmwareVer} is available!`
+            : `Firmware is up to date (v${this.currentFirmwareVer}).`;
+        } else {
+          this.hasFirmwareUpdate = false;
+          this.latestFirmwareVer = this.currentFirmwareVer;
+          this.otaStatus = 'IDLE';
+          this.otaMessage = `Firmware is up to date (v${this.currentFirmwareVer}).`;
+        }
       }
 
       // 2. Fetch full version history list for rollback/downgrade selection
