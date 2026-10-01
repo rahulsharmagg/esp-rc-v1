@@ -277,6 +277,11 @@ export class BLEController {
     this.distance = 300;
     this.log('ESP32 Bluetooth Disconnected', 'warn');
     this.vibrate([100, 50, 100]);
+
+    if (this.otaStatus === 'UPDATING') {
+      this.otaMessage = 'Bluetooth disconnected. ESP32 is flashing over Wi-Fi and rebooting...';
+      this.log('ℹ️ Bluetooth connection dropped during OTA update. ESP32 reboots automatically on flash success.', 'info');
+    }
   }
 
   sendCommand(cmd: string, force = false) {
@@ -499,11 +504,12 @@ export class BLEController {
     this.log(`🚀 Initiating ESP32 Over-The-Air (OTA) Flash for firmware v${versionToFlash}...`, 'warn');
     this.vibrate([50, 50, 50]);
 
-    // Construct full HTTP/HTTPS download URL for ESP32
+    // Construct full download URL for ESP32 (HTTP port 80 avoids TLS memory exhaustion during BLE coexistence)
     let downloadUrl = versionToFlash;
     if (!versionToFlash.startsWith('http://') && !versionToFlash.startsWith('https://')) {
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      downloadUrl = `${origin}/firmware/esp32/${versionToFlash}/firmware.bin`;
+      const espOrigin = origin.startsWith('https://') ? origin.replace('https://', 'http://') : origin;
+      downloadUrl = `${espOrigin}/firmware/esp32/${versionToFlash}/firmware.bin`;
     }
 
     this.sendCommand(`OTA:UPDATE:${downloadUrl}`, true);

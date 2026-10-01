@@ -576,7 +576,7 @@ void performOTAUpdate(String firmwareUrl) {
     if (final > 0) {
       int pct = (int)((current * 100) / final);
       static int lastReportedPct = -1;
-      if (pct != lastReportedPct && pct % 10 == 0) {
+      if (pct != lastReportedPct && pct % 5 == 0) {
         lastReportedPct = pct;
         char progBuf[64];
         snprintf(progBuf, sizeof(progBuf), "OTA_PROGRESS:%d:Writing firmware to flash...", pct);
@@ -586,11 +586,25 @@ void performOTAUpdate(String firmwareUrl) {
     }
   });
 
-  t_httpUpdate_return ret;
+  httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  httpUpdate.rebootOnUpdate(false);
+
+  t_httpUpdate_return ret = HTTP_UPDATE_FAILED;
+
   if (firmwareUrl.startsWith("https://")) {
     WiFiClientSecure secureClient;
     secureClient.setInsecure(); // Download binary without hardcoding CA root certificates
+    secureClient.setBufferSizes(4096, 1024); // Optimize TLS buffer size to prevent heap exhaustion with BLE active
+    secureClient.setHandshakeTimeout(30);
     ret = httpUpdate.update(secureClient, firmwareUrl);
+
+    // Fallback to plain HTTP if HTTPS is refused or fails due to TLS/memory limits
+    if (ret == HTTP_UPDATE_FAILED) {
+      String plainHttpUrl = "http://" + firmwareUrl.substring(8);
+      Serial.printf("[OTA] HTTPS failed. Attempting HTTP fallback: %s\n", plainHttpUrl.c_str());
+      WiFiClient plainClient;
+      ret = httpUpdate.update(plainClient, plainHttpUrl);
+    }
   } else {
     WiFiClient plainClient;
     ret = httpUpdate.update(plainClient, firmwareUrl);
