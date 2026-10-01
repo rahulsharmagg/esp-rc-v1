@@ -55,9 +55,10 @@ export function releaseFirmware(version, sourceBinPath, options = {}) {
   }
 
   const versionDir = path.join(FIRMWARE_ROOT, device.startsWith('esp32') ? 'esp32' : device, version);
+  const isForce = !!options.force;
 
-  if (fs.existsSync(versionDir)) {
-    throw new Error(`Firmware version directory already exists: ${versionDir}\nTo preserve version history and immutability, overwriting existing releases is prohibited.`);
+  if (fs.existsSync(versionDir) && !isForce) {
+    throw new Error(`Firmware version directory already exists: ${versionDir}\nUse --force to overwrite an existing version.`);
   }
 
   // Create directory structure
@@ -125,12 +126,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const binPath = path.resolve(args[1]);
 
   let isStable = false;
+  let force = false;
   let device = 'esp32-robot';
   let channel = 'stable';
 
   for (let i = 2; i < args.length; i++) {
     if (args[i] === '--stable') {
       isStable = true;
+    } else if (args[i] === '--force' || args[i] === '-f') {
+      force = true;
     } else if (args[i] === '--device' && args[i + 1]) {
       device = args[++i];
     } else if (args[i] === '--channel' && args[i + 1]) {
@@ -139,7 +143,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
 
   try {
-    releaseFirmware(version, binPath, { isStable, device, channel });
+    releaseFirmware(version, binPath, { isStable, force, device, channel });
     process.exit(0);
   } catch (err) {
     console.error(`\n❌ Release Error: ${err.message}\n`);

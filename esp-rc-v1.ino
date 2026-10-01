@@ -594,7 +594,6 @@ void performOTAUpdate(String firmwareUrl) {
   if (firmwareUrl.startsWith("https://")) {
     WiFiClientSecure secureClient;
     secureClient.setInsecure(); // Download binary without hardcoding CA root certificates
-    secureClient.setBufferSizes(4096, 1024); // Optimize TLS buffer size to prevent heap exhaustion with BLE active
     secureClient.setHandshakeTimeout(30);
     ret = httpUpdate.update(secureClient, firmwareUrl);
 

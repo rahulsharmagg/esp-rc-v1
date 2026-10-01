@@ -3,7 +3,7 @@
   "version": "1.0.3",
   "channel": "stable",
   "firmware": "firmware.bin",
-  "size": 1820576,
-  "sha256": "03572668f6c35f4cbe9fe6c65c414fe7c06560896f5a0dcf2c96b55054500b24",
-  "releasedAt": "2026-10-01T17:32:41.946Z"
+  "size": 1821072,
+  "sha256": "32100e6847907f3a0cb295d6caa475407d917a0408320c285aac659606540448",
+  "releasedAt": "2026-10-01T18:31:02.908Z"
 }
