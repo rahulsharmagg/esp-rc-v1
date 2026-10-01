@@ -109,7 +109,9 @@ function handleFirmwareApi(req, res, reqPath, urlObj) {
   if (reqPath === '/api/firmware/latest') {
     const stableFile = path.join(FIRMWARE_ROOT, 'stable.json');
     if (!fs.existsSync(stableFile)) {
-      sendError(res, 404, 'Stable firmware not found');
+      sendJson(res, 200, { device, version: null, available: false }, {
+        'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0'
+      });
       return true;
     }
 
