@@ -57,15 +57,19 @@
 
   function onPointerDown(e: PointerEvent) {
     e.preventDefault();
+    e.stopPropagation();
     if (!baseEl) return;
     activePointerId = e.pointerId;
-    baseEl.setPointerCapture(activePointerId);
+    try {
+      baseEl.setPointerCapture(activePointerId);
+    } catch (_) {}
     processMovement(e.clientX, e.clientY);
   }
 
   function onPointerMove(e: PointerEvent) {
     if (e.pointerId === activePointerId) {
       e.preventDefault();
+      e.stopPropagation();
       processMovement(e.clientX, e.clientY);
     }
   }
@@ -73,6 +77,12 @@
   function onPointerEnd(e: PointerEvent) {
     if (e.pointerId === activePointerId) {
       e.preventDefault();
+      e.stopPropagation();
+      try {
+        if (baseEl?.hasPointerCapture?.(e.pointerId)) {
+          baseEl.releasePointerCapture(e.pointerId);
+        }
+      } catch (_) {}
       activePointerId = null;
       if (stickEl) stickEl.style.transform = 'translate(0px, 0px)';
       ble.sendCommand('S', true);

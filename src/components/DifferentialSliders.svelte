@@ -32,7 +32,8 @@
     if (leftVal === 0 && rightVal === 0) {
       ble.sendCommand('S');
     } else {
-      ble.sendCommand(`D:${leftVal},${rightVal}`);
+      // Mapped so Left Screen Slider = Physical Left Motor, Right Screen Slider = Physical Right Motor
+      ble.sendCommand(`D:${rightVal},${leftVal}`);
     }
   }
 
@@ -53,6 +54,7 @@
   function onLeftPointerMove(e: PointerEvent) {
     if (activeLeftPointer === e.pointerId && leftTrackEl) {
       e.preventDefault();
+      e.stopPropagation();
       leftVal = updateTrackFromY(leftTrackEl, e.clientY);
       syncCommands();
     }
@@ -61,6 +63,12 @@
   function onLeftPointerEnd(e: PointerEvent) {
     if (activeLeftPointer === e.pointerId) {
       e.preventDefault();
+      e.stopPropagation();
+      try {
+        if ((e.currentTarget as HTMLElement)?.hasPointerCapture?.(e.pointerId)) {
+          (e.currentTarget as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+        }
+      } catch (_) {}
       activeLeftPointer = null;
       leftVal = 0;
       syncCommands();
@@ -73,7 +81,9 @@
     const target = e.currentTarget as HTMLElement;
     if (ble.driveMode !== 'MANUAL') ble.setDriveMode('MANUAL');
     activeRightPointer = e.pointerId;
-    target.setPointerCapture(activeRightPointer);
+    try {
+      target.setPointerCapture(activeRightPointer);
+    } catch (_) {}
     if (rightTrackEl) {
       rightVal = updateTrackFromY(rightTrackEl, e.clientY);
     }
@@ -84,6 +94,7 @@
   function onRightPointerMove(e: PointerEvent) {
     if (activeRightPointer === e.pointerId && rightTrackEl) {
       e.preventDefault();
+      e.stopPropagation();
       rightVal = updateTrackFromY(rightTrackEl, e.clientY);
       syncCommands();
     }
@@ -92,6 +103,12 @@
   function onRightPointerEnd(e: PointerEvent) {
     if (activeRightPointer === e.pointerId) {
       e.preventDefault();
+      e.stopPropagation();
+      try {
+        if ((e.currentTarget as HTMLElement)?.hasPointerCapture?.(e.pointerId)) {
+          (e.currentTarget as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+        }
+      } catch (_) {}
       activeRightPointer = null;
       rightVal = 0;
       syncCommands();
@@ -99,8 +116,8 @@
   }
 
   function getStatusLabel(val: number): string {
-    if (val > 10) return `+${val} (${Math.round((val / 255) * 100)}%)`;
-    if (val < -10) return `${val} (${Math.round((val / 255) * 100)}%)`;
+    if (val > 10) return `+${val} PWM`;
+    if (val < -10) return `${val} PWM`;
     return '0 (IDLE)';
   }
 

@@ -22,6 +22,13 @@
 #include <BLE2902.h>
 #include <ESP32Servo.h>
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
+
+// Firmware Version & OTA Configuration
+static const char FIRMWARE_VERSION[] = "1.0.2";
+static const char DEFAULT_OTA_URL[]  = "https://raw.githubusercontent.com/rahulsharmagg/esp-rc-v1/main/firmware/esp32/1.0.2/firmware.bin";
 
 // Wi-Fi Power & Connection State (Defaults OFF to maximize battery life)
 bool wifiRadioEnabled = false;
@@ -29,6 +36,13 @@ String activeConnectedSsid = "";
 String targetConnectingSsid = "";
 unsigned long wifiConnectStartTime = 0;
 bool isConnectingWifi = false;
+bool isScanningWifiActive = false;
+unsigned long wifiScanStartTime = 0;
+
+// Wi-Fi Async Scan Result Queue to prevent packet dropping without blocking loop()
+int scanResultCount = 0;
+int currentScanDispatchIndex = 0;
+unsigned long lastScanDispatchMillis = 0;
 
 // ============================================================================
 // HARDWARE PIN DEFINITIONS (Organized by Physical Header Banks)
@@ -43,7 +57,7 @@ bool isConnectingWifi = false;
 #define IN4 32  // Right motor direction 2 (GPIO 32)
 
 // --- BANK B (LEFT HEADER UPPER): DEDICATED INPUT SENSORS ---
-#define BATTERY_PIN 36  // ADC1 GPIO 36 (VP) - 1:1 Voltage divider
+#define BATTERY_PIN 36  // ADC1 GPIO 36 (VP) - 20k:10k Voltage divider (3.0 ratio)
 #define IR_LEFT     34  // Left IR Obstacle Sensor (Input-only GPIO 34)
 #define IR_RIGHT    35  // Right IR Obstacle Sensor (Input-only GPIO 35)
 #define IR_OBSTACLE_STATE LOW // LOW = obstacle detected for active-low IR modules
@@ -51,7 +65,7 @@ bool isConnectingWifi = false;
 // --- BANK C (RIGHT HEADER LOWER): ULTRASONIC SENSOR & PAN SERVO GIMBAL ---
 #define SERVO_PIN 5   // SG90 Pan Servo PWM (GPIO 5)
 #define TRIG_PIN  18  // HC-SR04 TRIG Output (GPIO 18)
-#define ECHO_PIN  19  // HC-SR04 ECHO Input (GPIO 19 via 1k:2k voltage divider)
+#define ECHO_PIN  19  // HC-SR04 ECHO Input (GPIO 19 via 10k:20k or 1k:2k voltage divider)
 
 // --- BANK D (RIGHT HEADER UPPER): LIGHTING, AUDIO & ONBOARD STATUS ---
 #define HEADLIGHT_LEFT_PIN  22  // Front Left Headlight LED (GPIO 22)
@@ -61,42 +75,60 @@ bool isConnectingWifi = false;
 
 bool isHeadlightsOn = false;
 
-const float BATTERY_DIVIDER_RATIO = 2.0; // 1:1 voltage divider (e.g. 2x 10k resistors)
-const float BATTERY_FULL_V        = 8.4; // 2S Li-ion Full
-const float BATTERY_EMPTY_V       = 6.4; // 2S Li-ion Cutoff
+// 2S Li-ion Battery Monitor Config (20k / 10k voltage divider => 3.0 ratio)
+static const float BATTERY_DIVIDER_RATIO = 3.0f; // Ratio = (20k + 10k) / 10k = 3.0
+static const float BATTERY_FULL_V        = 8.4f; // 2S Li-ion 100%
+static const float BATTERY_EMPTY_V       = 6.4f; // 2S Li-ion 0% (3.2V per cell cutoff)
+
+// Rolling average buffer to eliminate motor PWM electrical ripple
+static float smoothedBatteryVolts = 7.8f;
 
 int getBatteryLevel(float &outVolts) {
-  int raw = analogRead(BATTERY_PIN);
-  float pinV = (raw / 4095.0f) * 3.3f;
-  float batV = pinV * BATTERY_DIVIDER_RATIO;
+  // Fast 4-sample ADC read without blocking delays
+  uint32_t sum = analogRead(BATTERY_PIN);
+  sum += analogRead(BATTERY_PIN);
+  sum += analogRead(BATTERY_PIN);
+  sum += analogRead(BATTERY_PIN);
+  float raw = sum / 4.0f;
 
-  // Fallback to nominal 7.8V (85%) if ADC pin is not yet wired / floating low
-  if (raw < 50) {
-    batV = 7.8f;
+  // Return -1 (NO BATTERY) if ADC pin is floating/unwired (raw < 50)
+  if (raw < 50.0f) {
+    outVolts = 0.0f;
+    smoothedBatteryVolts = 0.0f;
+    return -1;
   }
 
-  outVolts = batV;
-  int pct = (int)(((batV - BATTERY_EMPTY_V) / (BATTERY_FULL_V - BATTERY_EMPTY_V)) * 100.0f);
-  return constrain(pct, 0, 100);
+  // ADC conversion: 12-bit (0-4095) with 11dB attenuation (0 - ~3.3V reference)
+  float pinV = (raw / 4095.0f) * 3.3f;
+  float instantBatV = pinV * BATTERY_DIVIDER_RATIO;
+
+  // Exponential moving average filter (EMA alpha = 0.15)
+  smoothedBatteryVolts = (smoothedBatteryVolts * 0.85f) + (instantBatV * 0.15f);
+  outVolts = smoothedBatteryVolts;
+
+  // Calculate percentage
+  float pctFloat = ((smoothedBatteryVolts - BATTERY_EMPTY_V) / (BATTERY_FULL_V - BATTERY_EMPTY_V)) * 100.0f;
+  int pct = (int)constrain(pctFloat, 0.0f, 100.0f);
+  return pct;
 }
 
 // ============================================================================
 // PWM & MOTOR TIMINGS
 // ============================================================================
-const int PWM_FREQ = 1000;
-const int PWM_RES  = 8; // 8-bit = 0-255
+static const int PWM_FREQ = 1000;
+static const int PWM_RES  = 8; // 8-bit = 0-255
 
 // Speed Presets
 volatile int currentSpeed = 180;
-const int TURN_SPEED = 170;
-const int SAFE_DISTANCE_CM = 20;
+static const int TURN_SPEED = 170;
+static const int SAFE_DISTANCE_CM = 20;
 
 // Autonomous Timings (ms)
-const int IR_BACKWARD_TIME      = 250;
-const int IR_TURN_TIME          = 400;
-const int BOTH_IR_BACKWARD_TIME = 400;
-const int BOTH_IR_TURN_TIME     = 400;
-const int ULTRASONIC_TURN_TIME  = 450;
+static const int IR_BACKWARD_TIME      = 250;
+static const int IR_TURN_TIME          = 400;
+static const int BOTH_IR_BACKWARD_TIME = 400;
+static const int BOTH_IR_TURN_TIME     = 400;
+static const int ULTRASONIC_TURN_TIME  = 450;
 
 // Safety failsafe timeout for manual mode
 #define FAILSAFE_TIMEOUT_MS 600
@@ -106,8 +138,8 @@ const int ULTRASONIC_TURN_TIME  = 450;
 // ============================================================================
 bool enableUltrasonic = true;
 bool enableServo      = true;
-bool enableIrLeft     = true;
-bool enableIrRight    = true;
+bool enableIrLeft     = false; // Default false so missing IR sensors don't lock auto-avoid
+bool enableIrRight    = false; // Default false
 
 // ============================================================================
 // BLE DEFINITIONS
@@ -119,10 +151,10 @@ bool enableIrRight    = true;
 
 // Servo Object & Positions
 Servo scanServo;
-const int SERVO_CENTER = 90;
-const int SERVO_LEFT   = 150;
-const int SERVO_RIGHT  = 30;
-int currentServoAngle  = SERVO_CENTER;
+static const int SERVO_CENTER = 90;
+static const int SERVO_LEFT   = 150;
+static const int SERVO_RIGHT  = 30;
+int currentServoAngle         = SERVO_CENTER;
 
 // Operating Modes
 enum DriveMode {
@@ -146,6 +178,10 @@ long lastMeasuredCenterDist = 100;
 bool lastLeftIrBlocked = false;
 bool lastRightIrBlocked = false;
 
+// Motor Pin State Cache to prevent redundant bus traffic
+static int cachedLeftSpeed = -1;
+static int cachedRightSpeed = -1;
+
 // Forward Declarations
 void stopMotors();
 void setSpeeds(int leftSpeed, int rightSpeed);
@@ -155,6 +191,8 @@ void turnLeft();
 void turnRight();
 void decideDirectionAndTurn();
 long getDistanceCM();
+void notifyBle(const char* msg);
+void notifyBle(const String& msg);
 
 // ============================================================================
 // MOTOR CONTROL PRIMITIVES
@@ -164,9 +202,14 @@ void setSpeeds(int leftSpeed, int rightSpeed) {
   leftSpeed = constrain(leftSpeed, 0, 255);
   rightSpeed = constrain(rightSpeed, 0, 255);
 
-  // ESP32 Core 3.x uses pin directly for ledcWrite
-  ledcWrite(ENA, leftSpeed);
-  ledcWrite(ENB, rightSpeed);
+  if (leftSpeed != cachedLeftSpeed) {
+    ledcWrite(ENA, leftSpeed);
+    cachedLeftSpeed = leftSpeed;
+  }
+  if (rightSpeed != cachedRightSpeed) {
+    ledcWrite(ENB, rightSpeed);
+    cachedRightSpeed = rightSpeed;
+  }
 }
 
 void moveForward() {
@@ -278,7 +321,7 @@ void setDifferential(int left, int right) {
 // Non-blocking Status LED Blink State
 unsigned long lastStatusLedBlinkMillis = 0;
 bool statusLedBlinkState = false;
-const unsigned long STATUS_LED_BLINK_INTERVAL_MS = 350;
+static const unsigned long STATUS_LED_BLINK_INTERVAL_MS = 350;
 
 void updateStatusLed() {
   if (deviceConnected) {
@@ -309,7 +352,7 @@ void setHorn(bool on) {
 }
 
 // ============================================================================
-// ULTRASONIC DISTANCE SENSOR
+// ULTRASONIC DISTANCE SENSOR (Optimized Non-Blocking Pulse Timeout)
 // ============================================================================
 
 long getDistanceCM() {
@@ -321,11 +364,12 @@ long getDistanceCM() {
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  long duration = pulseIn(ECHO_PIN, HIGH, 25000); // 25ms timeout (~400cm)
+  // 18ms timeout (~300cm max range) keeps loop() fast and responsive
+  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 18000);
   if (duration == 0) {
     return -1;
   }
-  return (long)(duration * 0.0343 / 2);
+  return (long)(duration * 0.0343f / 2.0f);
 }
 
 // ============================================================================
@@ -334,7 +378,6 @@ long getDistanceCM() {
 
 void decideDirectionAndTurn() {
   if (!enableServo || !enableUltrasonic) {
-    // If scanning disabled, default turn right
     turnRight();
     delay(ULTRASONIC_TURN_TIME);
     stopMotors();
@@ -347,19 +390,19 @@ void decideDirectionAndTurn() {
   // 1. Look LEFT
   scanServo.write(SERVO_LEFT);
   currentServoAngle = SERVO_LEFT;
-  delay(350);
+  delay(280);
   leftDist = getDistanceCM();
 
   // 2. Look RIGHT
   scanServo.write(SERVO_RIGHT);
   currentServoAngle = SERVO_RIGHT;
-  delay(500);
+  delay(380);
   rightDist = getDistanceCM();
 
   // 3. Return to CENTER
   scanServo.write(SERVO_CENTER);
   currentServoAngle = SERVO_CENTER;
-  delay(300);
+  delay(240);
 
   if (leftDist < 0) leftDist = 400;
   if (rightDist < 0) rightDist = 400;
@@ -441,38 +484,38 @@ void runAutonomousObstacleAvoidance() {
 
   // Path Clear -> Cruise Forward
   moveForward();
-  delay(20);
+  delay(15);
 }
 
 // ============================================================================
-// WI-FI & BLE NOTIFICATION ROUTINES
+// WI-FI & BLE NOTIFICATION ROUTINES (Zero Heap Fragmentation)
 // ============================================================================
 
-void notifyBle(const String& msg) {
+void notifyBle(const char* msg) {
   if (deviceConnected && pTxCharacteristic) {
-    pTxCharacteristic->setValue(msg.c_str());
+    pTxCharacteristic->setValue((uint8_t*)msg, strlen(msg));
     pTxCharacteristic->notify();
   }
+}
+
+void notifyBle(const String& msg) {
+  notifyBle(msg.c_str());
 }
 
 void scanWifiNetworks() {
   if (!wifiRadioEnabled) {
     WiFi.mode(WIFI_STA);
-    WiFi.disconnect();
     delay(50);
     wifiRadioEnabled = true;
   }
-  Serial.println("[WIFI] Scanning 2.4GHz networks...");
-  int n = WiFi.scanNetworks(false, true);
-  String resp = "WIFI_SCAN:" + String(n) + ":";
-  for (int i = 0; i < n && i < 12; ++i) {
-    if (i > 0) resp += "|";
-    bool enc = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
-    resp += WiFi.SSID(i) + "," + String(WiFi.RSSI(i)) + "," + (enc ? "1" : "0");
-  }
-  WiFi.scanDelete();
-  notifyBle(resp);
-  Serial.printf("[WIFI] Scan finished: %d networks found\n", n);
+  Serial.println("[WIFI] Initiating async 2.4GHz network scan...");
+  WiFi.scanDelete(); // Clear previous cache
+  WiFi.scanNetworks(true); // Non-blocking background scan
+  isScanningWifiActive = true;
+  wifiScanStartTime = millis();
+  scanResultCount = 0;
+  currentScanDispatchIndex = 0;
+  notifyBle("WIFI_SCAN_START");
 }
 
 void connectWifi(const String& ssid, const String& pass) {
@@ -511,6 +554,69 @@ void turnWifiRadioOff() {
 }
 
 // ============================================================================
+// OVER-THE-AIR (OTA) FIRMWARE UPDATE
+// ============================================================================
+
+void performOTAUpdate(String firmwareUrl) {
+  if (WiFi.status() != WL_CONNECTED) {
+    notifyBle("OTA_ERROR:WiFi Not Connected");
+    Serial.println("[OTA] WiFi Not Connected!");
+    return;
+  }
+
+  if (firmwareUrl.length() == 0) {
+    firmwareUrl = DEFAULT_OTA_URL;
+  }
+
+  Serial.printf("[OTA] Starting OTA flash from: %s\n", firmwareUrl.c_str());
+  notifyBle("OTA_PROGRESS:10:Connecting to firmware host...");
+  stopMotors();
+
+  httpUpdate.onProgress([](size_t current, size_t final) {
+    if (final > 0) {
+      int pct = (int)((current * 100) / final);
+      static int lastReportedPct = -1;
+      if (pct != lastReportedPct && pct % 10 == 0) {
+        lastReportedPct = pct;
+        char progBuf[64];
+        snprintf(progBuf, sizeof(progBuf), "OTA_PROGRESS:%d:Writing firmware to flash...", pct);
+        notifyBle(progBuf);
+        Serial.printf("[OTA] Flash progress: %d%%\n", pct);
+      }
+    }
+  });
+
+  t_httpUpdate_return ret;
+  if (firmwareUrl.startsWith("https://")) {
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure(); // Download binary without hardcoding CA root certificates
+    ret = httpUpdate.update(secureClient, firmwareUrl);
+  } else {
+    WiFiClient plainClient;
+    ret = httpUpdate.update(plainClient, firmwareUrl);
+  }
+
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("[OTA] HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+      notifyBle("OTA_ERROR:" + httpUpdate.getLastErrorString());
+      break;
+
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("[OTA] HTTP_UPDATE_NO_UPDATES");
+      notifyBle("OTA_ERROR:No update available");
+      break;
+
+    case HTTP_UPDATE_OK:
+      Serial.println("[OTA] HTTP_UPDATE_OK - Firmware flashed! Rebooting ESP32...");
+      notifyBle("OTA_COMPLETE");
+      delay(500);
+      ESP.restart();
+      break;
+  }
+}
+
+// ============================================================================
 // MOTION & BLUETOOTH COMMAND HANDLER
 // ============================================================================
 
@@ -520,7 +626,23 @@ void processCommand(const String& cmd) {
   lastCommandTimestamp = millis();
   char c = cmd.charAt(0);
 
-  // 0. Wi-Fi Control Commands (e.g. "WIFI:SCAN", "WIFI:CONN:SSID:PASS", "WIFI:OFF")
+  // 0. OTA Firmware Flash Command ("OTA:UPDATE", "OTA:UPDATE:<url>", "OTA:VERSION")
+  if (cmd.startsWith("OTA:UPDATE")) {
+    String url = "";
+    if (cmd.length() > 10 && cmd.charAt(10) == ':') {
+      url = cmd.substring(11);
+    }
+    performOTAUpdate(url);
+    return;
+  }
+  if (cmd == "OTA:VERSION" || cmd == "FIRMWARE:VERSION") {
+    char verBuf[32];
+    snprintf(verBuf, sizeof(verBuf), "FIRMWARE_VER:%s", FIRMWARE_VERSION);
+    notifyBle(verBuf);
+    return;
+  }
+
+  // 0.1 Wi-Fi Control Commands (e.g. "WIFI:SCAN", "WIFI:CONN:SSID:PASS", "WIFI:OFF")
   if (cmd.startsWith("WIFI:")) {
     String sub = cmd.substring(5);
     if (sub == "SCAN") {
@@ -550,7 +672,10 @@ void processCommand(const String& cmd) {
       if (!wifiRadioEnabled) {
         notifyBle("WIFI_STATUS:OFF:0.0.0.0:0:");
       } else if (WiFi.status() == WL_CONNECTED) {
-        notifyBle("WIFI_STATUS:CONNECTED:" + WiFi.localIP().toString() + ":" + String(WiFi.RSSI()) + ":" + WiFi.SSID());
+        char statusBuf[96];
+        snprintf(statusBuf, sizeof(statusBuf), "WIFI_STATUS:CONNECTED:%s:%d:%s",
+                 WiFi.localIP().toString().c_str(), WiFi.RSSI(), WiFi.SSID().c_str());
+        notifyBle(statusBuf);
       } else {
         notifyBle("WIFI_STATUS:DISCONNECTED:0.0.0.0:0:");
       }
@@ -600,15 +725,15 @@ void processCommand(const String& cmd) {
     return;
   }
 
-  // 4. Mode Selection Commands
-  if (c == 'A') {
+  // 4. Mode Selection Commands ('X' or 'A' = AUTOMATIC, 'M' or 'a' = MANUAL)
+  if (c == 'A' || c == 'X') {
     currentMode = MODE_AUTO_AVOID;
     scanServo.write(SERVO_CENTER);
     currentServoAngle = SERVO_CENTER;
     Serial.println("[MODE] Engaged: AUTOMATIC (Obstacle Avoidance)");
     return;
   }
-  if (c == 'a') {
+  if (c == 'a' || c == 'M') {
     currentMode = MODE_MANUAL;
     stopMotors();
     scanServo.write(SERVO_CENTER);
@@ -662,7 +787,7 @@ void processCommand(const String& cmd) {
     }
   }
 
-  // 7. Directional Motion Commands (Manual Touch Inputs)
+  // 9. Directional Motion Commands (Manual Touch Inputs)
   currentMode = MODE_MANUAL;
   lastCommandChar = c;
 
@@ -706,10 +831,11 @@ class RxCallbacks : public BLECharacteristicCallbacks {
     if (rxValue.length() > 0) {
       processCommand(rxValue);
 
-      // Latency echo acknowledgment
+      // Fast echo acknowledgment (zero dynamic allocation)
       if (deviceConnected && pTxCharacteristic) {
-        String ack = "ACK:" + rxValue;
-        pTxCharacteristic->setValue(ack.c_str());
+        char ack[64];
+        snprintf(ack, sizeof(ack), "ACK:%s", rxValue.c_str());
+        pTxCharacteristic->setValue((uint8_t*)ack, strlen(ack));
         pTxCharacteristic->notify();
       }
     }
@@ -722,11 +848,11 @@ class RxCallbacks : public BLECharacteristicCallbacks {
 
 void setup() {
   Serial.begin(115200);
-  delay(100);
+  delay(50);
 
   Serial.println();
   Serial.println("==========================================");
-  Serial.println(" ESP32 BLE Obstacle-Avoiding RC Car");
+  Serial.println(" ESP32 BLE Obstacle-Avoiding RC Car v1.0.2");
   Serial.println(" Hardware: L298N + SG90 Servo + HC-SR04 + 2x IR");
   Serial.println(" Core 3.x | Web Bluetooth Nordic UART");
   Serial.println("==========================================");
@@ -746,7 +872,10 @@ void setup() {
   pinMode(ECHO_PIN, INPUT);
   digitalWrite(TRIG_PIN, LOW);
 
-  // 4. IR sensors (Input-only pins GPIO34 & GPIO35)
+  // 4. ADC & IR Input Pins
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db); // 0-3.3V ADC measuring range
+  pinMode(BATTERY_PIN, INPUT);
   pinMode(IR_LEFT, INPUT);
   pinMode(IR_RIGHT, INPUT);
 
@@ -758,14 +887,14 @@ void setup() {
   scanServo.setPeriodHertz(50);
   scanServo.attach(SERVO_PIN, 500, 2400);
 
-  // Immediate Startup Sweep Test (Left -> Right -> Center)
+  // Startup Sweep Test (Left -> Right -> Center)
   Serial.println("[SERVO] Testing sweep: LEFT -> RIGHT -> CENTER...");
   scanServo.write(SERVO_LEFT);
-  delay(400);
+  delay(300);
   scanServo.write(SERVO_RIGHT);
-  delay(600);
+  delay(450);
   scanServo.write(SERVO_CENTER);
-  delay(350);
+  delay(250);
   Serial.println("[SERVO] Sweep test complete.");
 
   // 6. Bluetooth Status LED, Dual Headlight LEDs & Buzzer Initialization
@@ -810,9 +939,10 @@ void setup() {
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x06);
   pAdvertising->setMinPreferred(0x12);
+  BLEDevice::setMTU(512); // Request 512-byte ATT MTU
   BLEDevice::startAdvertising();
 
-  // 8. Start with Wi-Fi Radio OFF (Battery Saver Mode)
+  // 9. Start with Wi-Fi Radio OFF (Battery Saver Mode)
   WiFi.mode(WIFI_OFF);
 
   Serial.println("[READY] BLE Advertising active. Ready for PWA pairing.");
@@ -828,14 +958,60 @@ void loop() {
   // 0. Non-blocking Bluetooth Status LED Update (Solid when connected, Blinks when searching)
   updateStatusLed();
 
-  // 1. Wi-Fi Connection State Monitor
+  // 1. Non-Blocking Wi-Fi Scan Result Dispatcher (No dropped BLE notifications & no loop stalls)
+  if (isScanningWifiActive) {
+    int16_t scanResult = WiFi.scanComplete();
+    if (scanResult >= 0) {
+      if (scanResultCount == 0) {
+        scanResultCount = scanResult;
+        currentScanDispatchIndex = 0;
+        Serial.printf("[WIFI] Async scan complete. Found %d networks.\n", scanResult);
+        char countBuf[32];
+        snprintf(countBuf, sizeof(countBuf), "WIFI_SCAN_START:%d", scanResult);
+        notifyBle(countBuf);
+      }
+
+      // Dispatch 1 network notification every 25ms in non-blocking fashion
+      if (currentMillis - lastScanDispatchMillis >= 25) {
+        lastScanDispatchMillis = currentMillis;
+
+        if (currentScanDispatchIndex < scanResultCount && currentScanDispatchIndex < 15) {
+          String ssid = WiFi.SSID(currentScanDispatchIndex);
+          if (ssid.length() > 0) {
+            int rssi = WiFi.RSSI(currentScanDispatchIndex);
+            bool enc = (WiFi.encryptionType(currentScanDispatchIndex) != WIFI_AUTH_OPEN);
+            char netMsg[80];
+            snprintf(netMsg, sizeof(netMsg), "WIFI_NET:%s:%d:%d", ssid.c_str(), rssi, enc ? 1 : 0);
+            notifyBle(netMsg);
+            Serial.printf("  [%d] %s (%d dBm)\n", currentScanDispatchIndex + 1, ssid.c_str(), rssi);
+          }
+          currentScanDispatchIndex++;
+        } else {
+          // Finished dispatching all networks
+          isScanningWifiActive = false;
+          WiFi.scanDelete();
+          notifyBle("WIFI_SCAN_END");
+        }
+      }
+    } else if (scanResult == -2 || (currentMillis - wifiScanStartTime > 10000)) {
+      // Scan failed or timed out
+      isScanningWifiActive = false;
+      WiFi.scanDelete();
+      Serial.println("[WIFI] Scan failed or timed out.");
+      notifyBle("WIFI_SCAN_END");
+    }
+  }
+
+  // 2. Non-Blocking Wi-Fi Connection State Monitor
   if (isConnectingWifi && wifiRadioEnabled) {
     if (WiFi.status() == WL_CONNECTED) {
       isConnectingWifi = false;
       activeConnectedSsid = WiFi.SSID();
       String ip = WiFi.localIP().toString();
       int rssi = WiFi.RSSI();
-      notifyBle("WIFI_STATUS:CONNECTED:" + ip + ":" + String(rssi) + ":" + activeConnectedSsid);
+      char connBuf[96];
+      snprintf(connBuf, sizeof(connBuf), "WIFI_STATUS:CONNECTED:%s:%d:%s", ip.c_str(), rssi, activeConnectedSsid.c_str());
+      notifyBle(connBuf);
       Serial.printf("[WIFI] Connected to %s! IP: %s (RSSI: %d dBm)\n", activeConnectedSsid.c_str(), ip.c_str(), rssi);
     } else if (currentMillis - wifiConnectStartTime > 12000) {
       isConnectingWifi = false;
@@ -844,9 +1020,9 @@ void loop() {
     }
   }
 
-  // 1. Auto Re-Advertising on Client Disconnect
+  // 3. Auto Re-Advertising on Client Disconnect
   if (!deviceConnected && oldDeviceConnected) {
-    delay(200);
+    delay(100);
     pServer->startAdvertising();
     Serial.println("[BLE] Restarted advertising after disconnect.");
     oldDeviceConnected = deviceConnected;
@@ -858,7 +1034,7 @@ void loop() {
     Serial.println("[BLE] Client connected and synchronized!");
   }
 
-  // 2. Mode Execution: Autonomous vs Manual
+  // 4. Mode Execution: Autonomous vs Manual
   if (currentMode == MODE_AUTO_AVOID) {
     runAutonomousObstacleAvoidance();
   } else {
@@ -873,12 +1049,12 @@ void loop() {
     }
   }
 
-  // 3. Telemetry Stream to PWA (every 100ms when connected)
+  // 5. Telemetry Stream to PWA (every 100ms when connected) - Zero Heap Allocation
   if (deviceConnected && (currentMillis - lastTelemetryMillis >= 100)) {
     lastTelemetryMillis = currentMillis;
     unsigned long uptimeSec = currentMillis / 1000;
 
-    // Read fast distance in manual mode if idle
+    // Read fast distance in manual mode if robot is stationary
     if (currentMode == MODE_MANUAL && lastCommandChar == 'S') {
       long d = enableUltrasonic ? getDistanceCM() : -1;
       if (d > 0) lastMeasuredCenterDist = d;
@@ -888,21 +1064,23 @@ void loop() {
 
     // Packet format: T:<uptime>,<center_dist_cm>,<ir_left>,<ir_right>,<servo_angle>,<battery_pct>,<battery_v>,<mode>
     char modeChar = (currentMode == MODE_AUTO_AVOID) ? 'A' : 'M';
-    float batV = 7.8;
+    float batV = 7.8f;
     int batPct = getBatteryLevel(batV);
 
-    String telemetry = "T:" + String(uptimeSec) + "," +
-                       String(lastMeasuredCenterDist) + "," +
-                       String(lastLeftIrBlocked ? 1 : 0) + "," +
-                       String(lastRightIrBlocked ? 1 : 0) + "," +
-                       String(currentServoAngle) + "," +
-                       String(batPct) + "," +
-                       String(batV, 2) + "," +
-                       String(modeChar);
+    char telemetry[64];
+    snprintf(telemetry, sizeof(telemetry), "T:%lu,%ld,%d,%d,%d,%d,%.2f,%c",
+             uptimeSec,
+             lastMeasuredCenterDist,
+             lastLeftIrBlocked ? 1 : 0,
+             lastRightIrBlocked ? 1 : 0,
+             currentServoAngle,
+             batPct,
+             batV,
+             modeChar);
 
-    pTxCharacteristic->setValue(telemetry.c_str());
+    pTxCharacteristic->setValue((uint8_t*)telemetry, strlen(telemetry));
     pTxCharacteristic->notify();
   }
 
-  delay(5);
+  delay(2);
 }

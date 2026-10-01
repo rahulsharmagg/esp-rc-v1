@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BLEController } from '../lib/ble.svelte';
-  import { Zap } from '@lucide/svelte';
+  import { Zap, OctagonAlert } from '@lucide/svelte';
 
   interface Props {
     ble: BLEController;
@@ -54,11 +54,21 @@
 
   function onTurboDown(e: PointerEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
+    } catch (_) {}
     ble.setTurbo(true);
   }
 
   function onTurboUp(e: PointerEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    try {
+      if ((e.currentTarget as HTMLElement)?.hasPointerCapture?.(e.pointerId)) {
+        (e.currentTarget as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+      }
+    } catch (_) {}
     ble.setTurbo(false);
   }
 
@@ -89,12 +99,12 @@
       <span class="cockpit-dot"></span>
       THROTTLE QUADRANT
     </span>
-    <span class="pwm-readout {ble.isTurbo ? 'turbo-mode' : ''}">
+    <span class="pwm-readout">
       {ble.currentSpeed} ({speedPct}%)
     </span>
   </div>
 
-  <!-- Vertical Throttle Body -->
+  <!-- Vertical Throttle Body (Expands to fill 100% available height) -->
   <div class="throttle-vertical-body">
     
     <!-- 1. 10-Segment VU Meter Column (Aligned 1-to-1 with Throttle Range) -->
@@ -105,7 +115,7 @@
       {/each}
     </div>
 
-    <!-- 2. Mechanical Throttle Lever Track -->
+    <!-- 2. Mechanical Throttle Lever Track (Fills remaining height) -->
     <div 
       class="throttle-lever-track" 
       bind:this={trackEl}
@@ -122,7 +132,7 @@
         <span class="grad-mark" data-val="0">0</span>
       </div>
 
-      <!-- Handle Grip (Positioned via top % offset - Only Handle Initiates Drag) -->
+      <!-- Handle Grip -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div 
         class="throttle-handle {isDragging ? 'dragging' : ''}" 
@@ -152,34 +162,30 @@
       </div>
     </div>
 
-    <!-- 3. Preset Quick Selection & Turbo Column -->
-    <div class="throttle-presets-col">
-      <button class="preset-btn" onclick={() => ble.sendSpeed(80)}>
-        30%<span class="p-sub">80</span>
-      </button>
-      <button class="preset-btn" onclick={() => ble.sendSpeed(150)}>
-        60%<span class="p-sub">150</span>
-      </button>
-      <button class="preset-btn" onclick={() => ble.sendSpeed(200)}>
-        80%<span class="p-sub">200</span>
-      </button>
-
+    <!-- 3. Right Action Column: TURBO on top, STOP directly below (Equal Width) -->
+    <div class="throttle-actions-col">
       <button 
+        type="button"
         class="btn-turbo-boost {ble.isTurbo ? 'turbo-active' : ''}" 
         title="Hold for Turbo Boost (255 PWM)"
         onpointerdown={onTurboDown}
         onpointerup={onTurboUp}
         onpointercancel={onTurboUp}
       >
-        <Zap size={18} strokeWidth={2.5} class="turbo-bolt" fill="currentColor" />
+        <Zap size={15} strokeWidth={2.5} class="turbo-bolt" fill="currentColor" />
         <span class="turbo-lbl">TURBO</span>
+      </button>
+
+      <button 
+        type="button"
+        class="emergency-brake-btn" 
+        title="Emergency Stop All Motors" 
+        onclick={onBrake}
+      >
+        <OctagonAlert size={14} strokeWidth={2.5} />
+        <span class="brake-lbl">STOP</span>
       </button>
     </div>
 
   </div>
-
-  <!-- Emergency Brake Button -->
-  <button class="emergency-brake-btn" title="Emergency Stop All Motors" onclick={onBrake}>
-    <span>STOP</span>
-  </button>
 </div>

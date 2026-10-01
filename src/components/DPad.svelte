@@ -20,6 +20,10 @@
 
   function startCmd(cmd: string, e: PointerEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    try {
+      (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
+    } catch (_) {}
     if (ble.driveMode !== 'MANUAL') ble.setDriveMode('MANUAL');
     ble.sendCommand(cmd, true);
     ble.vibrate(15);
@@ -27,6 +31,12 @@
 
   function stopCmd(e: PointerEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    try {
+      if ((e.currentTarget as HTMLElement)?.hasPointerCapture?.(e.pointerId)) {
+        (e.currentTarget as HTMLElement)?.releasePointerCapture?.(e.pointerId);
+      }
+    } catch (_) {}
     ble.sendCommand('S', true);
   }
 </script>

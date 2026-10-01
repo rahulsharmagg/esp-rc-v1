@@ -9,17 +9,20 @@
   import RightPanel from './components/RightPanel.svelte';
   import WifiModal from './components/WifiModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
+  import FirmwareModal from './components/FirmwareModal.svelte';
 
   const ble = new BLEController();
 
   let isSettingsModalOpen = $state(false);
   let isWifiModalOpen = $state(false);
+  let isFirmwareModalOpen = $state(false);
 
-  let isAnyModalOpen = $derived(isSettingsModalOpen || isWifiModalOpen);
+  let isAnyModalOpen = $derived(isSettingsModalOpen || isWifiModalOpen || isFirmwareModalOpen);
 
   function closeAllModals() {
     isSettingsModalOpen = false;
     isWifiModalOpen = false;
+    isFirmwareModalOpen = false;
   }
 
   // Keyboard Shortcuts (WASD / Arrows / Space)
@@ -107,14 +110,33 @@
     gamepadAnimId = requestAnimationFrame(pollGamepad);
   }
 
-  function preventContextMenu(e: Event) {
+  function preventDefaults(e: Event) {
     e.preventDefault();
+  }
+
+  function handleVisibilityChange() {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      ble.requestWakeLock();
+    }
+  }
+
+  function handleFirstUserInteraction() {
+    ble.requestWakeLock();
   }
 
   onMount(() => {
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('contextmenu', preventContextMenu);
+    window.addEventListener('contextmenu', preventDefaults, { passive: false });
+    window.addEventListener('selectstart', preventDefaults, { passive: false });
+    window.addEventListener('gesturestart', preventDefaults, { passive: false });
+    window.addEventListener('pointerdown', handleFirstUserInteraction, { once: true });
+    window.addEventListener('touchstart', handleFirstUserInteraction, { once: true, passive: true });
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Request initial screen wake lock
+    ble.requestWakeLock();
+
     gamepadAnimId = requestAnimationFrame(pollGamepad);
   });
 
@@ -122,8 +144,14 @@
     if (typeof window !== 'undefined') {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('contextmenu', preventContextMenu);
+      window.removeEventListener('contextmenu', preventDefaults);
+      window.removeEventListener('selectstart', preventDefaults);
+      window.removeEventListener('gesturestart', preventDefaults);
+      window.removeEventListener('pointerdown', handleFirstUserInteraction);
+      window.removeEventListener('touchstart', handleFirstUserInteraction);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     }
+    ble.releaseWakeLock();
     if (gamepadAnimId) cancelAnimationFrame(gamepadAnimId);
   });
 </script>
@@ -179,5 +207,13 @@
   {ble} 
   isOpen={isSettingsModalOpen} 
   onClose={() => isSettingsModalOpen = false}
+  onOpenWifi={() => isWifiModalOpen = true}
+  onOpenFirmware={() => isFirmwareModalOpen = true}
+/>
+
+<FirmwareModal 
+  {ble}
+  isOpen={isFirmwareModalOpen}
+  onClose={() => isFirmwareModalOpen = false}
   onOpenWifi={() => isWifiModalOpen = true}
 />

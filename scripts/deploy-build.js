@@ -31,6 +31,10 @@ try {
     fs.copyFileSync('server.js', path.join(tempWorktreeDir, 'server.js'));
   }
 
+  if (fs.existsSync('firmware')) {
+    fs.cpSync('firmware', path.join(tempWorktreeDir, 'firmware'), { recursive: true });
+  }
+
   const prodPkg = {
     name: 'esp-rc-production',
     version: '4.0.0',

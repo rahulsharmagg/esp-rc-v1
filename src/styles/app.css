@@ -481,14 +481,21 @@ html, body {
   white-space: nowrap;
 }
 
+/* Dedicated constant width ONLY for the Ping / Latency readout */
 .bar-latency {
   font-size: 0.52rem;
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-weight: 700;
   color: var(--text-muted);
   line-height: 1;
   margin-top: 2px;
   white-space: nowrap;
+  display: inline-block;
+  width: 42px;
+  min-width: 42px;
+  max-width: 42px;
+  text-align: left;
 }
 
 .top-center {
@@ -533,12 +540,14 @@ html, body {
 .pill-val {
   color: var(--red-primary);
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 
 .pill-sub {
   font-size: 0.52rem;
   color: var(--text-muted);
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Battery Telemetry Pill */
@@ -598,13 +607,50 @@ html, body {
   margin-left: 0.5px;
 }
 
-/* Wi-Fi Status Indicator (Pure Status Badge, Not a Button) */
+/* No Battery / Unpowered State */
+.battery-pill.no-battery {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.35);
+  gap: 5px;
+}
+
+.battery-shell.no-bat {
+  border-color: #64748b;
+  background: rgba(241, 245, 249, 0.8);
+  position: relative;
+  overflow: hidden;
+}
+
+.no-bat-line {
+  position: absolute;
+  top: 50%;
+  left: -2px;
+  right: -2px;
+  height: 1.5px;
+  background: #dc2626;
+  transform: rotate(-32deg);
+}
+
+.battery-nipple.no-bat {
+  background: #64748b;
+}
+
+.pill-val.no-bat-text {
+  color: #64748b;
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+}
+
+/* Wi-Fi Status Indicator */
 .wifi-status-indicator {
   padding: 0 6px;
-  background: var(--bg-card-alt);
-  border: 1px solid var(--border-light);
+  background: #ffffff;
+  border: 1.5px solid var(--border-light);
   gap: 4px;
   color: var(--text-muted);
+  border-radius: 0px;
+  transition: all 0.12s ease;
 }
 
 .wifi-status-indicator svg {
@@ -619,22 +665,37 @@ html, body {
   background: #94a3b8;
 }
 
+/* Enabled State -> Black Border, Black Icon, Black Dot */
+.wifi-status-indicator.wifi-on {
+  border-color: var(--black-solid);
+  background: #ffffff;
+}
 .wifi-status-indicator.wifi-on svg {
   stroke: var(--black-solid);
 }
 .wifi-status-indicator.wifi-on .wifi-indicator-dot {
-  background: var(--yellow-warn);
-  box-shadow: 0 0 4px var(--yellow-warn);
+  background: var(--black-solid);
+  box-shadow: none;
 }
 
+/* Connected State -> Green Border, Green Icon, Green Glow Dot */
+.wifi-status-indicator.wifi-connected {
+  border-color: var(--green-ok);
+  background: #ffffff;
+}
 .wifi-status-indicator.wifi-connected svg {
   stroke: var(--green-ok);
 }
 .wifi-status-indicator.wifi-connected .wifi-indicator-dot {
   background: var(--green-ok);
-  box-shadow: 0 0 4px var(--green-ok);
+  box-shadow: 0 0 5px var(--green-ok);
 }
 
+/* Disabled/Off State -> Muted Gray */
+.wifi-status-indicator.wifi-off {
+  border-color: var(--border-light);
+  background: var(--bg-card-alt);
+}
 .wifi-status-indicator.wifi-off svg {
   stroke: #94a3b8;
 }
@@ -687,7 +748,7 @@ html, body {
 }
 
 .status-text {
-  max-width: 85px;
+  max-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -987,9 +1048,11 @@ html, body {
 .diff-channel-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   font-size: 0.6rem;
   font-weight: 800;
+  flex: 1;
 }
 
 .channel-title {
@@ -998,12 +1061,14 @@ html, body {
   gap: 4px;
   color: var(--black-solid);
   letter-spacing: 0.5px;
+  white-space: nowrap;
 }
 
 .diff-channel-divider {
   width: 1px;
   height: 12px;
   background: var(--border-light);
+  margin: 0 8px;
 }
 
 .diff-pwm-readout {
@@ -1011,6 +1076,12 @@ html, body {
   font-weight: 900;
   font-size: 0.65rem;
   color: var(--text-muted);
+  width: 70px;
+  min-width: 70px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  white-space: nowrap;
 }
 
 .diff-pwm-readout.fwd {
@@ -1223,8 +1294,18 @@ html, body {
   font-weight: 800;
 }
 
-.radar-tag { color: var(--text-muted); }
-.radar-dist { font-family: var(--font-mono); font-weight: 800; color: var(--red-primary); }
+.radar-tag { color: var(--text-muted); flex-shrink: 0; }
+.radar-dist { 
+  font-family: var(--font-mono); 
+  font-weight: 800; 
+  color: var(--red-primary);
+  width: 72px;
+  min-width: 72px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  white-space: nowrap;
+}
 
 .radar-track {
   width: 100%;
@@ -1244,22 +1325,29 @@ html, body {
 .radar-fill.warning { background: var(--yellow-warn); }
 .radar-fill.danger { background: var(--red-primary); }
 
-/* Quick Actuators Bar (Lights & Horn above throttle) */
+/* Quick Actuators Bar (Lights, Horn & Pan Servo) */
+.actuators-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .actuator-quick-bar {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 5px;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
 }
 
 .actuator-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 4px 8px;
+  gap: 4px;
+  padding: 4px 5px;
   background: #ffffff;
   border: 1.5px solid var(--black-solid);
-  font-size: 0.65rem;
+  border-radius: 0px;
+  font-size: 0.58rem;
   font-weight: 800;
   letter-spacing: 0.5px;
   color: var(--black-solid);
@@ -1287,6 +1375,148 @@ html, body {
 .actuator-btn:active {
   transform: translate(1px, 1px);
   box-shadow: 0px 0px 0px rgba(0,0,0,0.12);
+}
+
+/* Servo Slider Box (Directly below button group) */
+.servo-slider-box {
+  background: var(--bg-card-alt);
+  border: 1.5px solid var(--black-solid);
+  border-radius: 0px;
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.1);
+  padding: 5px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  animation: fadeIn 0.12s ease-out;
+}
+
+.servo-slider-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  line-height: 1;
+}
+
+.servo-title {
+  font-weight: 800;
+  color: var(--text-muted);
+}
+
+.servo-readout {
+  font-weight: 700;
+  color: var(--black-solid);
+}
+.servo-readout strong {
+  color: var(--red-primary);
+  font-weight: 900;
+}
+
+.servo-slider-row {
+  display: flex;
+  align-items: center;
+  padding: 2px 0;
+}
+
+.servo-range-input {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #cbd5e1;
+  border: 1px solid var(--black-solid);
+  border-radius: 0px;
+  outline: none;
+  cursor: pointer;
+}
+
+.servo-range-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 16px;
+  background: var(--red-primary);
+  border: 1.5px solid var(--black-solid);
+  border-radius: 0px;
+  cursor: pointer;
+  box-shadow: 1px 1px 0px rgba(0,0,0,0.2);
+}
+
+.servo-range-input::-moz-range-thumb {
+  width: 14px;
+  height: 16px;
+  background: var(--red-primary);
+  border: 1.5px solid var(--black-solid);
+  border-radius: 0px;
+  cursor: pointer;
+}
+
+.servo-horizontal-scale {
+  position: relative;
+  width: 100%;
+  height: 18px;
+  margin-top: 1px;
+}
+
+.scale-point {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  background: transparent;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  padding: 0;
+  border-radius: 0px;
+}
+
+.tick-line {
+  width: 1.5px;
+  height: 5px;
+  background: #64748b;
+  margin-bottom: 2px;
+  transition: all 0.1s;
+}
+
+.tick-line.major {
+  height: 7px;
+  background: var(--red-primary);
+  width: 2px;
+}
+
+.tick-lbl {
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  font-weight: 700;
+  color: #64748b;
+  line-height: 1;
+}
+
+.tick-lbl.major {
+  color: var(--red-primary);
+  font-weight: 900;
+}
+
+.scale-point:hover .tick-line {
+  background: var(--red-primary);
+}
+
+.scale-point:hover .tick-lbl {
+  color: var(--red-primary);
+}
+
+.scale-point.active .tick-line {
+  background: var(--red-primary);
+  height: 7px;
+  width: 2px;
+}
+
+.scale-point.active .tick-lbl {
+  color: var(--red-primary);
+  font-weight: 900;
 }
 
 /* ==========================================================================
@@ -1321,6 +1551,7 @@ html, body {
   align-items: center;
   gap: 4px;
   letter-spacing: 0.5px;
+  white-space: nowrap;
 }
 
 .cockpit-dot {
@@ -1336,6 +1567,12 @@ html, body {
   font-weight: 900;
   color: var(--red-primary);
   font-size: 0.68rem;
+  width: 90px;
+  min-width: 90px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  white-space: nowrap;
   transition: all 0.15s ease;
 }
 
@@ -1532,28 +1769,29 @@ html, body {
   height: 1px;
 }
 
-/* 3. Preset Quick Selection Column - Light Cockpit Theme */
-.throttle-presets-col {
+/* 3. Action Column (TURBO + STOP Equal Width) - Light Cockpit Theme */
+.throttle-actions-col {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   margin: 6px 0;
-  gap: 4px;
-  width: 58px;
+  gap: 6px;
+  width: 48px;
 }
 
 .btn-turbo-boost {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  padding: 6px 4px;
-  background: linear-gradient(135deg, #f59e0b 0%, #dc2626 100%);
+  padding: 4px 2px;
+  background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
   border: 2px solid var(--black-solid);
   color: #ffffff;
   font-family: var(--font-mono);
-  font-size: 0.6rem;
+  font-size: 0.56rem;
   font-weight: 900;
   letter-spacing: 0.8px;
   cursor: pointer;
@@ -1562,13 +1800,12 @@ html, body {
   touch-action: none;
   box-shadow: 2px 2px 0px rgba(0,0,0,0.18);
   transition: all 0.08s ease;
-  border-radius: 3px;
-  min-height: 48px;
+  border-radius: 0px;
 }
 
 .btn-turbo-boost svg {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
   stroke: #ffffff;
   fill: #ffffff;
   filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.9));
@@ -1576,85 +1813,47 @@ html, body {
 
 .btn-turbo-boost:active,
 .btn-turbo-boost.turbo-active {
-  background: linear-gradient(135deg, #ff0000 0%, #991b1b 100%);
-  box-shadow: 0 0 14px rgba(239, 68, 68, 0.95), inset 0 0 8px rgba(255, 255, 255, 0.4);
+  background: linear-gradient(135deg, #6d28d9 0%, #1d4ed8 100%);
+  box-shadow: 0 0 14px rgba(124, 58, 237, 0.85), inset 0 0 8px rgba(255, 255, 255, 0.4);
   transform: scale(0.95);
   border-color: #ffffff;
   animation: pulse-turbo 0.35s infinite alternate;
 }
 
 @keyframes pulse-turbo {
-  0% { box-shadow: 0 0 6px #ef4444; }
-  100% { box-shadow: 0 0 16px #ff0000, 0 0 24px rgba(255, 80, 0, 0.8); }
+  0% { box-shadow: 0 0 6px #7c3aed; }
+  100% { box-shadow: 0 0 16px #3b82f6, 0 0 24px rgba(124, 58, 237, 0.8); }
 }
 
-.pwm-readout.turbo-mode {
-  color: #ff0000 !important;
-  text-shadow: 0 0 6px rgba(255, 0, 0, 0.8);
-  font-weight: 900;
-  animation: pulse-turbo 0.4s infinite alternate;
-}
-
-.preset-btn {
-  padding: 3px 2px;
-  background: #ffffff;
-  border: 1.5px solid var(--black-solid);
+/* Compact Emergency Stop Button directly below Boost */
+.emergency-brake-btn {
+  flex: 1;
+  width: 100%;
+  background: var(--red-primary);
+  border: 2px solid var(--black-solid);
+  border-radius: 0px;
+  color: #ffffff;
   font-family: var(--font-mono);
-  font-size: 0.54rem;
-  font-weight: 800;
-  color: var(--black-solid);
+  font-size: 0.58rem;
+  font-weight: 900;
+  letter-spacing: 0.8px;
   cursor: pointer;
-  transition: all 0.1s;
-  border-radius: 2px;
-  box-shadow: 1px 1px 0px rgba(0,0,0,0.12);
+  box-shadow: 2px 2px 0px rgba(0,0,0,0.18);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  line-height: 1.1;
+  gap: 2px;
+  padding: 4px 2px;
+  transition: all 0.08s ease;
 }
 
-.preset-btn .p-sub {
-  font-size: 0.44rem;
-  color: var(--text-muted);
-  font-weight: 700;
-}
-
-.preset-btn:hover {
-  background: #f1f5f9;
-}
-
-.preset-btn:active, .preset-btn.active {
-  background: var(--red-primary);
-  color: #ffffff;
-  border-color: var(--red-dark);
-  box-shadow: 0 0 6px var(--red-glow);
-}
-.preset-btn:active .p-sub, .preset-btn.active .p-sub {
-  color: #fecaca;
-}
-
-/* Large Emergency Stop Button */
-.emergency-brake-btn {
-  width: 100%;
-  height: clamp(38px, 12vh, 48px);
-  background: linear-gradient(135deg, var(--red-primary), var(--red-dark));
-  border: 2px solid var(--black-solid);
-  color: #ffffff;
-  font-size: clamp(0.72rem, 2vh, 0.85rem);
-  font-weight: 900;
-  letter-spacing: 1px;
-  cursor: pointer;
-  box-shadow: 2px 2px 0px var(--black-solid);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  transition: transform 0.05s ease;
+.emergency-brake-btn:hover {
+  background: var(--red-dark);
 }
 
 .emergency-brake-btn:active {
-  transform: translate(2px, 2px);
+  transform: scale(0.95);
   box-shadow: 0px 0px 0px var(--black-solid);
 }
 
@@ -1791,14 +1990,16 @@ html, body {
   transition: opacity 0.2s ease, visibility 0.2s ease;
 }
 
-.sensor-modal {
+.sensor-modal,
+.standard-modal {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%) scale(0.95);
-  width: 92vw;
-  max-width: 820px;
-  max-height: 90vh;
+  width: 94vw;
+  max-width: 680px;
+  height: 86vh;
+  max-height: 600px;
   background: #ffffff;
   border: 2px solid var(--black-solid);
   box-shadow: 6px 6px 0px var(--red-primary), 0 25px 50px -12px rgba(0,0,0,0.25);
@@ -1933,18 +2134,26 @@ html, body {
 .card-badge.ok { background: #dcfce7; color: var(--green-ok); border: 1px solid var(--green-ok); }
 .card-badge.off { background: #fee2e2; color: var(--red-primary); border: 1px solid var(--red-primary); }
 
-/* Cyber Switch Styling */
-.cyber-switch-wrap {
+/* In-Theme Rectangular Cyber Switch Styling */
+.cyber-switch-wrap,
+.mobile-switch-wrap {
   position: relative;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   width: 38px;
   height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.cyber-switch-wrap input {
+.cyber-switch-wrap input,
+.mobile-switch-wrap input {
   opacity: 0;
   width: 0;
   height: 0;
+  position: absolute;
 }
 
 .switch-slider {
@@ -1952,8 +2161,10 @@ html, body {
   cursor: pointer;
   inset: 0;
   background-color: #cbd5e1;
-  border: 1.5px solid var(--black-solid);
-  transition: 0.2s;
+  border: 2px solid var(--black-solid, #0a0e17);
+  border-radius: 0px;
+  transition: background-color 0.15s ease-in-out;
+  box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.12);
 }
 
 .switch-slider:before {
@@ -1963,17 +2174,24 @@ html, body {
   width: 12px;
   left: 2px;
   bottom: 2px;
-  background-color: var(--black-solid);
-  transition: 0.2s;
+  background-color: var(--black-solid, #0a0e17);
+  border-radius: 0px;
+  transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1), background-color 0.15s ease-in-out;
 }
 
 input:checked + .switch-slider {
-  background-color: var(--red-primary);
+  background-color: var(--red-primary, #dc2626);
 }
 
 input:checked + .switch-slider:before {
   transform: translateX(18px);
   background-color: #ffffff;
+  box-shadow: 1px 1px 0px rgba(0, 0, 0, 0.2);
+}
+
+input:focus-visible + .switch-slider {
+  outline: 2px solid var(--red-primary, #dc2626);
+  outline-offset: 2px;
 }
 
 /* Card Body & Live Readouts */
@@ -1997,6 +2215,11 @@ input:checked + .switch-slider:before {
   font-size: 0.72rem;
   font-weight: 800;
   color: var(--black-solid);
+  min-width: 80px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  white-space: nowrap;
 }
 .sensor-val.ok { color: var(--green-ok); }
 .sensor-val.danger { color: var(--red-primary); }
@@ -2012,6 +2235,7 @@ input:checked + .switch-slider:before {
   padding: 3px 8px;
   background: #ffffff;
   border: 1.5px solid var(--black-solid);
+  border-radius: 0px;
   font-size: 0.62rem;
   font-weight: 800;
   color: var(--black-solid);

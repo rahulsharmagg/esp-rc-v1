@@ -1,4 +1,12 @@
-import type { DriveMode, LogEntry, WifiNetwork, WifiStatus } from './types';
+import type { 
+  DriveMode, 
+  LogEntry, 
+  WifiNetwork, 
+  WifiStatus,
+  FirmwareVersionInfo,
+  FirmwareLatestResponse,
+  FirmwareVersionsResponse
+} from './types';
 
 const NORDIC_UART_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const NORDIC_UART_RX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
@@ -14,8 +22,9 @@ export class BLEController {
   // Telemetry
   uptime = $state('00:00');
   driveMode = $state<DriveMode>('MANUAL');
-  batteryPct = $state(85);
-  batteryVolts = $state(7.8);
+  batteryPct = $state(-1);
+  batteryVolts = $state(0.0);
+  hasBattery = $derived(this.batteryPct >= 0 && this.batteryVolts >= 1.0);
   distance = $state(300);
   irLeft = $state(false);
   irRight = $state(false);
@@ -34,6 +43,9 @@ export class BLEController {
 
   // Preferences
   hapticEnabled = $state(true);
+  wakeLockEnabled = $state(true);
+  wakeLockActive = $state(false);
+  private wakeLockSentinel: any = null;
 
   // Hardware Sensor On/Off Toggles
   ultrasonicEnabled = $state(true);
@@ -73,6 +85,17 @@ export class BLEController {
   wifiNetworks = $state<WifiNetwork[]>([]);
   isScanningWifi = $state(false);
 
+  // OTA Firmware Update State
+  otaStatus = $state<'IDLE' | 'CHECKING' | 'AVAILABLE' | 'UPDATING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  otaProgress = $state(0);
+  otaMessage = $state('');
+  currentFirmwareVer = $state('1.0.2');
+  latestFirmwareVer = $state('1.0.2');
+  hasFirmwareUpdate = $state(false);
+  availableVersions = $state<FirmwareVersionInfo[]>([]);
+  selectedVersion = $state<string>('');
+  isCheckingFirmware = $state(false);
+
   // Internal Bluetooth primitives
   private device: BluetoothDevice | null = null;
   private server: BluetoothRemoteGATTServer | null = null;
@@ -96,6 +119,57 @@ export class BLEController {
       if (savedHaptic !== null) {
         this.hapticEnabled = savedHaptic !== 'false';
       }
+      const savedWakeLock = localStorage.getItem('esp32_rc_wakelock');
+      if (savedWakeLock !== null) {
+        this.wakeLockEnabled = savedWakeLock !== 'false';
+      }
+    }
+  }
+
+  async requestWakeLock() {
+    if (!this.wakeLockEnabled || typeof navigator === 'undefined' || !('wakeLock' in navigator)) {
+      return;
+    }
+    try {
+      if (this.wakeLockSentinel && !this.wakeLockSentinel.released) {
+        this.wakeLockActive = true;
+        return;
+      }
+      this.wakeLockSentinel = await (navigator as any).wakeLock.request('screen');
+      this.wakeLockActive = true;
+      this.wakeLockSentinel.addEventListener('release', () => {
+        this.wakeLockActive = false;
+      });
+      this.log('💡 Screen Wake Lock active (Always On)', 'info');
+    } catch (err: any) {
+      this.wakeLockActive = false;
+      // Many mobile browsers silently fail if page is not visible or user hasn't interacted yet
+      console.warn('[WakeLock] Could not acquire lock:', err.message);
+    }
+  }
+
+  async releaseWakeLock() {
+    if (this.wakeLockSentinel) {
+      try {
+        await this.wakeLockSentinel.release();
+      } catch (err) {
+        // ignore
+      }
+      this.wakeLockSentinel = null;
+    }
+    this.wakeLockActive = false;
+  }
+
+  setWakeLock(enable: boolean) {
+    this.wakeLockEnabled = enable;
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('esp32_rc_wakelock', enable.toString());
+    }
+    if (enable) {
+      this.requestWakeLock();
+    } else {
+      this.releaseWakeLock();
+      this.log('Screen Wake Lock disabled', 'info');
     }
   }
 
@@ -278,6 +352,12 @@ export class BLEController {
     if (on) this.vibrate([20, 20]);
   }
 
+  setServoAngle(angle: number) {
+    const clamped = Math.max(0, Math.min(180, Math.round(angle)));
+    this.servoAngle = clamped;
+    this.sendCommand(`P:${clamped}`, true);
+  }
+
   setTurbo(enable: boolean) {
     if (enable && !this.isTurbo) {
       this.isTurbo = true;
@@ -327,6 +407,10 @@ export class BLEController {
     }
   }
 
+  startWifiScan() {
+    this.scanWifi();
+  }
+
   connectToWifi(ssid: string, pass: string) {
     this.log(`Connecting ESP32 to Wi-Fi SSID [${ssid}]...`, 'info');
     this.sendCommand(`WIFI:CONN:${ssid}:${pass}`, true);
@@ -335,6 +419,87 @@ export class BLEController {
   disconnectWifi() {
     this.sendCommand('WIFI:DISC', true);
     this.log('Disconnecting ESP32 from Wi-Fi AP...', 'warn');
+  }
+
+  // OTA Firmware Update & Version History Methods
+  private isFetchingVersions = false;
+
+  async checkFirmwareUpdate() {
+    if (this.isCheckingFirmware) return;
+    this.isCheckingFirmware = true;
+    this.otaStatus = 'CHECKING';
+    this.otaMessage = 'Querying firmware repository for releases...';
+    this.log('Checking firmware backend API (/api/firmware/latest)...', 'info');
+
+    try {
+      // 1. Fetch latest stable release from backend API
+      const latestRes = await fetch('/api/firmware/latest?device=esp32-robot', { cache: 'no-store' })
+        .catch(() => null);
+
+      if (latestRes && latestRes.ok) {
+        const latest: FirmwareLatestResponse = await latestRes.json();
+        this.latestFirmwareVer = latest.version;
+        this.hasFirmwareUpdate = this.latestFirmwareVer !== this.currentFirmwareVer;
+        this.otaStatus = this.hasFirmwareUpdate ? 'AVAILABLE' : 'IDLE';
+        this.otaMessage = this.hasFirmwareUpdate 
+          ? `New stable firmware v${this.latestFirmwareVer} is available!`
+          : `Firmware is up to date (v${this.currentFirmwareVer}).`;
+      }
+
+      // 2. Fetch full version history list for rollback/downgrade selection
+      await this.fetchFirmwareVersions();
+    } catch (err: any) {
+      this.otaStatus = 'IDLE';
+      this.otaMessage = 'Firmware update server checked.';
+    } finally {
+      this.isCheckingFirmware = false;
+    }
+  }
+
+  async fetchFirmwareVersions() {
+    if (this.isFetchingVersions) return;
+    this.isFetchingVersions = true;
+    try {
+      const res = await fetch('/api/firmware/versions?device=esp32-robot', { cache: 'no-store' });
+      if (res.ok) {
+        const data: FirmwareVersionsResponse = await res.json();
+        if (data && Array.isArray(data.versions)) {
+          this.availableVersions = data.versions;
+          if (!this.selectedVersion && this.availableVersions.length > 0) {
+            this.selectedVersion = this.availableVersions[0].version;
+          }
+        }
+      }
+    } catch (err: any) {
+      this.log(`Could not load firmware version history: ${err.message}`, 'warn');
+    } finally {
+      this.isFetchingVersions = false;
+    }
+  }
+
+  startFirmwareUpdate(targetVersionOrUrl?: string) {
+    if (!this.wifi.connected) {
+      this.log('Cannot perform OTA: ESP32 is not connected to Wi-Fi!', 'error');
+      this.otaStatus = 'ERROR';
+      this.otaMessage = 'Connect ESP32 to Wi-Fi with internet/local access first.';
+      return;
+    }
+
+    const versionToFlash = targetVersionOrUrl || this.selectedVersion || this.latestFirmwareVer;
+    this.otaStatus = 'UPDATING';
+    this.otaProgress = 5;
+    this.otaMessage = `Initiating OTA flash for v${versionToFlash}...`;
+    this.log(`🚀 Initiating ESP32 Over-The-Air (OTA) Flash for firmware v${versionToFlash}...`, 'warn');
+    this.vibrate([50, 50, 50]);
+
+    // Construct full HTTP/HTTPS download URL for ESP32
+    let downloadUrl = versionToFlash;
+    if (!versionToFlash.startsWith('http://') && !versionToFlash.startsWith('https://')) {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      downloadUrl = `${origin}/firmware/esp32/${versionToFlash}/firmware.bin`;
+    }
+
+    this.sendCommand(`OTA:UPDATE:${downloadUrl}`, true);
   }
 
   // Handle incoming UART Telemetry & BLE Messages
@@ -360,7 +525,8 @@ export class BLEController {
         this.irLeft = parseInt(parts[2], 10) === 1;
         this.irRight = parseInt(parts[3], 10) === 1;
         this.servoAngle = parseInt(parts[4], 10) || 90;
-        this.batteryPct = parseInt(parts[5], 10) || 0;
+        const rawBatPct = parseInt(parts[5], 10);
+        this.batteryPct = isNaN(rawBatPct) ? -1 : rawBatPct;
         this.batteryVolts = parseFloat(parts[6]) || 0;
         const mode = parts[7];
 
@@ -372,7 +538,33 @@ export class BLEController {
         else if (mode === 'M' && this.driveMode !== 'MANUAL') this.driveMode = 'MANUAL';
       }
     } 
-    // 2. Wi-Fi Scan Result
+    // 2. Wi-Fi Scan Streaming & Batch Results
+    else if (message.startsWith('WIFI_SCAN_START')) {
+      this.isScanningWifi = true;
+      this.wifiNetworks = [];
+      this.log('Listening for Wi-Fi beacon packets from ESP32...', 'info');
+    }
+    else if (message.startsWith('WIFI_NET:')) {
+      const parts = message.substring(9).split(':');
+      if (parts.length >= 3 && parts[0].trim().length > 0) {
+        const ssid = parts[0];
+        const rssi = parseInt(parts[1], 10) || -80;
+        const isEncrypted = parts[2] === '1';
+
+        const existingIdx = this.wifiNetworks.findIndex(n => n.ssid === ssid);
+        if (existingIdx !== -1) {
+          this.wifiNetworks[existingIdx].rssi = rssi;
+        } else {
+          this.wifiNetworks.push({ ssid, rssi, isEncrypted });
+        }
+        this.wifiNetworks.sort((a, b) => b.rssi - a.rssi);
+      }
+    }
+    else if (message.startsWith('WIFI_SCAN_END')) {
+      this.isScanningWifi = false;
+      this.wifiNetworks.sort((a, b) => b.rssi - a.rssi);
+      this.log(`Wi-Fi Scan Complete: ${this.wifiNetworks.length} network(s) found.`, 'success');
+    }
     else if (message.startsWith('WIFI_SCAN:')) {
       this.isScanningWifi = false;
       const rest = message.substring(10);
@@ -393,6 +585,7 @@ export class BLEController {
         });
         nets.sort((a, b) => b.rssi - a.rssi);
         this.wifiNetworks = nets;
+        this.log(`Wi-Fi Scan: ${this.wifiNetworks.length} network(s) found.`, 'success');
       }
     }
     // 3. Wi-Fi Status Result
@@ -408,10 +601,36 @@ export class BLEController {
       } else if (state === 'CONNECTED') {
         this.wifi = { enabled: true, connected: true, ssid, ip, rssi };
         this.log(`Wi-Fi Connected! IP: ${ip} (SSID: ${ssid})`, 'success');
+        this.checkFirmwareUpdate();
       } else {
         this.wifi = { enabled: true, connected: false, ssid: '', ip: '0.0.0.0', rssi: 0 };
       }
-    } else {
+    }
+    // 4. OTA Firmware Notification Handlers
+    else if (message.startsWith('OTA_PROGRESS:')) {
+      const parts = message.substring(13).split(':');
+      this.otaProgress = parseInt(parts[0], 10) || 0;
+      this.otaStatus = 'UPDATING';
+      this.otaMessage = parts.slice(1).join(':') || `Flashing ESP32: ${this.otaProgress}%`;
+      this.log(`[OTA Flash] ${this.otaProgress}% - ${this.otaMessage}`, 'info');
+    }
+    else if (message.startsWith('OTA_COMPLETE')) {
+      this.otaProgress = 100;
+      this.otaStatus = 'SUCCESS';
+      this.otaMessage = 'Firmware flashed successfully! ESP32 is rebooting...';
+      this.log('✅ ESP32 Firmware OTA Flash Complete! Rebooting...', 'success');
+      this.vibrate([100, 50, 100, 50, 200]);
+    }
+    else if (message.startsWith('OTA_ERROR:')) {
+      this.otaStatus = 'ERROR';
+      this.otaMessage = message.substring(10) || 'OTA Update Failed';
+      this.log(`❌ OTA Update Failed: ${this.otaMessage}`, 'error');
+    }
+    else if (message.startsWith('FIRMWARE_VER:')) {
+      this.currentFirmwareVer = message.substring(13).trim();
+      this.log(`ESP32 Firmware Version: ${this.currentFirmwareVer}`, 'info');
+    }
+    else {
       this.log(`ESP32: ${message}`);
     }
   }

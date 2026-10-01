@@ -63,7 +63,7 @@
     <img src="/ESP-RC-LOGO.svg" alt="ESP-RC Logo" class="bar-logo" />
     <div class="bar-title-wrap">
       <span class="bar-title">ESP-RC</span>
-      <span class="bar-latency">{ble.latency > 0 ? `${ble.latency}ms latency` : 'BLE STANDBY'}</span>
+      <span class="bar-latency">{ble.latency > 0 ? `${ble.latency} ms` : '-- ms'}</span>
     </div>
   </div>
 
@@ -80,16 +80,28 @@
     </div>
 
     <!-- Battery Status Telemetry Pill -->
-    <div class="battery-pill" title="ESP32 Battery Level">
-      <div class="battery-icon-wrap">
-        <div class="battery-shell">
-          <div class={batteryFillClass} style="width: {Math.max(5, Math.min(100, ble.batteryPct))}%;"></div>
+    {#if ble.hasBattery}
+      <div class="battery-pill" title="ESP32 Battery Level: {ble.batteryPct}% ({ble.batteryVolts.toFixed(1)}V)">
+        <div class="battery-icon-wrap">
+          <div class="battery-shell">
+            <div class={batteryFillClass} style="width: {Math.max(5, Math.min(100, ble.batteryPct))}%;"></div>
+          </div>
+          <div class="battery-nipple"></div>
         </div>
-        <div class="battery-nipple"></div>
+        <span class="pill-val">{ble.batteryPct}%</span>
+        <span class="pill-sub">({ble.batteryVolts.toFixed(1)}V)</span>
       </div>
-      <span class="pill-val">{ble.batteryPct}%</span>
-      <span class="pill-sub">({ble.batteryVolts.toFixed(1)}V)</span>
-    </div>
+    {:else}
+      <div class="battery-pill no-battery" title="No Battery Detected (USB / External 5V Power)">
+        <div class="battery-icon-wrap">
+          <div class="battery-shell no-bat">
+            <div class="no-bat-line"></div>
+          </div>
+          <div class="battery-nipple no-bat"></div>
+        </div>
+        <span class="pill-val no-bat-text">NO BAT</span>
+      </div>
+    {/if}
 
     <!-- Wi-Fi Status Indicator & Scanner Trigger -->
     <button 

@@ -43,3 +43,27 @@ export interface SensorStatus {
   value: string;
   details: string;
 }
+
+export interface FirmwareVersionInfo {
+  version: string;
+  channel: string;
+  size: number;
+  sha256: string;
+  releasedAt: string;
+}
+
+export interface FirmwareLatestResponse {
+  device: string;
+  channel: string;
+  version: string;
+  firmware: string;
+  sha256: string;
+  size: number;
+  releasedAt: string;
+}
+
+export interface FirmwareVersionsResponse {
+  device: string;
+  versions: FirmwareVersionInfo[];
+}
+
