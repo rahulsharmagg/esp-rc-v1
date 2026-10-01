@@ -248,9 +248,10 @@ export class BLEController {
       this.log(`Connected to ${this.deviceName} successfully!`, 'success');
       this.vibrate([30, 40, 30]);
 
-      // Sync initial speed and mode
+      // Sync initial speed, mode, firmware version, and Wi-Fi status
       this.sendSpeed(this.currentSpeed);
       this.setDriveMode('MANUAL');
+      this.sendCommand('OTA:VERSION', true);
       this.sendCommand('WIFI:STATUS', true);
     } catch (err: any) {
       this.isConnecting = false;
@@ -284,10 +285,12 @@ export class BLEController {
     }
   }
 
+  private isWriting = false;
+
   sendCommand(cmd: string, force = false) {
     if (!cmd) return;
 
-    if (this.onMovementChange && !cmd.startsWith('E:') && !cmd.startsWith('V') && !cmd.startsWith('P:') && !cmd.startsWith('WIFI:')) {
+    if (this.onMovementChange && !cmd.startsWith('E:') && !cmd.startsWith('V') && !cmd.startsWith('P:') && !cmd.startsWith('WIFI:') && !cmd.startsWith('OTA:')) {
       this.onMovementChange(cmd, this.currentSpeed);
     }
 
@@ -299,18 +302,18 @@ export class BLEController {
     const now = Date.now();
     const elapsed = now - this.lastSentTimestamp;
 
-    if (elapsed >= this.minSendIntervalMs) {
+    if (elapsed >= this.minSendIntervalMs && !this.isWriting) {
       this.flushCommand();
     } else if (!this.sendTimer) {
       this.sendTimer = setTimeout(() => {
         this.sendTimer = null;
         this.flushCommand();
-      }, this.minSendIntervalMs - elapsed);
+      }, Math.max(10, this.minSendIntervalMs - elapsed));
     }
   }
 
   private async flushCommand() {
-    if (!this.pendingCommand) return;
+    if (!this.pendingCommand || this.isWriting) return;
     const cmd = this.pendingCommand;
     this.pendingCommand = null;
     this.lastSentCommand = cmd;
@@ -318,6 +321,7 @@ export class BLEController {
 
     if (!this.isConnected || !this.rxChar) return;
 
+    this.isWriting = true;
     try {
       const encoder = new TextEncoder();
       const data = encoder.encode(cmd + '\n');
@@ -329,7 +333,14 @@ export class BLEController {
         await this.rxChar.writeValue(data);
       }
     } catch (err: any) {
-      this.log(`Transmit error: ${err.message}`, 'error');
+      if (!err.message?.includes('already in progress')) {
+        this.log(`Transmit error: ${err.message}`, 'error');
+      }
+    } finally {
+      this.isWriting = false;
+      if (this.pendingCommand) {
+        setTimeout(() => this.flushCommand(), 10);
+      }
     }
   }
 
@@ -435,6 +446,10 @@ export class BLEController {
     this.otaStatus = 'CHECKING';
     this.otaMessage = 'Querying firmware repository for releases...';
     this.log('Checking firmware backend API (/api/firmware/latest)...', 'info');
+
+    if (this.isConnected) {
+      this.sendCommand('OTA:VERSION', true);
+    }
 
     try {
       // 1. Fetch latest stable release from backend API
@@ -641,7 +656,12 @@ export class BLEController {
     }
     else if (message.startsWith('FIRMWARE_VER:')) {
       this.currentFirmwareVer = message.substring(13).trim();
-      this.log(`ESP32 Firmware Version: ${this.currentFirmwareVer}`, 'info');
+      this.hasFirmwareUpdate = this.latestFirmwareVer !== this.currentFirmwareVer;
+      if (!this.hasFirmwareUpdate) {
+        this.otaStatus = 'IDLE';
+        this.otaMessage = `Firmware is up to date (v${this.currentFirmwareVer}).`;
+      }
+      this.log(`ESP32 Running Firmware: v${this.currentFirmwareVer}`, 'info');
     }
     else {
       this.log(`ESP32: ${message}`);

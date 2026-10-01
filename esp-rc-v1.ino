@@ -1044,6 +1044,9 @@ void loop() {
     oldDeviceConnected = deviceConnected;
     lastCommandTimestamp = currentMillis;
     currentMode = MODE_MANUAL;
+    char verBuf[32];
+    snprintf(verBuf, sizeof(verBuf), "FIRMWARE_VER:%s", FIRMWARE_VERSION);
+    notifyBle(verBuf);
     Serial.println("[BLE] Client connected and synchronized!");
   }
 
