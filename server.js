@@ -2,6 +2,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { WebSocketServer } from 'ws';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -443,11 +444,50 @@ const server = http.createServer((req, res) => {
   });
 });
 
+// Initialize WebSocket Server on /ws endpoint (compatible with wss:// proxy)
+const wss = new WebSocketServer({ server, path: '/ws' });
+
+wss.on('connection', (socket, req) => {
+  const clientIp = req.socket.remoteAddress || 'unknown';
+  console.log(`[WSS] Client connected from ${clientIp}`);
+
+  socket.send(JSON.stringify({
+    type: 'WELCOME',
+    message: 'Connected to rc.codeblaze.in Cloud WebSocket Relay',
+    timestamp: new Date().toISOString()
+  }));
+
+  socket.on('message', (data, isBinary) => {
+    try {
+      const msgStr = isBinary ? data : data.toString();
+      console.log(`[WSS] Received message (${msgStr.length} chars)`);
+      
+      // Echo back confirmation for connectivity checks and relay testing
+      socket.send(JSON.stringify({
+        type: 'ECHO',
+        received: msgStr.toString(),
+        serverTime: Date.now()
+      }));
+    } catch (err) {
+      console.error('[WSS] Message handling error:', err.message);
+    }
+  });
+
+  socket.on('close', (code, reason) => {
+    console.log(`[WSS] Client disconnected (${code})`);
+  });
+
+  socket.on('error', (err) => {
+    console.error('[WSS] Socket error:', err.message);
+  });
+});
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n======================================================`);
   console.log(` 🚀 ESP32 RC Car PWA & Firmware Server is LIVE!`);
   console.log(` 🌐 Local Access:    http://localhost:${PORT}`);
   console.log(` 📡 Firmware API:    http://localhost:${PORT}/api/firmware/latest`);
   console.log(` 📦 Version History: http://localhost:${PORT}/api/firmware/versions`);
+  console.log(` 🔌 WebSocket Relay: ws://localhost:${PORT}/ws`);
   console.log(`======================================================\n`);
 });
