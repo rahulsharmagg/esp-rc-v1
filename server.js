@@ -237,6 +237,19 @@ function handleFirmwareApi(req, res, reqPath, urlObj) {
   return false;
 }
 
+const sseClients = new Set();
+
+function broadcastSse(data) {
+  const payload = `data: ${JSON.stringify(data)}\n\n`;
+  for (const client of sseClients) {
+    try {
+      client.write(payload);
+    } catch (e) {
+      sseClients.delete(client);
+    }
+  }
+}
+
 /**
  * Firmware Binary Streaming Handler
  */
@@ -263,21 +276,68 @@ function handleFirmwareBinaryStream(req, res, reqPath) {
       return;
     }
 
+    const totalSize = stats.size;
+    let bytesSent = 0;
+    let lastSentPct = -1;
+
     res.writeHead(200, {
       'Content-Type': 'application/octet-stream',
-      'Content-Length': stats.size,
+      'Content-Length': totalSize,
       'Content-Disposition': `attachment; filename="firmware-${version}.bin"`,
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Access-Control-Allow-Origin': '*'
     });
 
+    broadcastSse({
+      type: 'OTA_START',
+      version,
+      totalSize,
+      status: 'DOWNLOADING',
+      message: `ESP32 connected! Delivering v${version} binary...`
+    });
+
     const stream = fs.createReadStream(binaryPath);
+    
+    stream.on('data', (chunk) => {
+      bytesSent += chunk.length;
+      const pct = Math.min(100, Math.round((bytesSent / totalSize) * 100));
+      if (pct !== lastSentPct && pct % 2 === 0) {
+        lastSentPct = pct;
+        broadcastSse({
+          type: 'OTA_PROGRESS',
+          version,
+          pct,
+          bytesSent,
+          totalSize,
+          status: pct >= 100 ? 'REBOOTING' : 'DOWNLOADING'
+        });
+      }
+    });
+
+    stream.on('end', () => {
+      broadcastSse({
+        type: 'OTA_COMPLETE',
+        version,
+        pct: 100,
+        bytesSent: totalSize,
+        totalSize,
+        status: 'REBOOTING',
+        message: 'Binary successfully received by ESP32. Writing to Flash & Rebooting...'
+      });
+    });
+
     stream.on('error', (streamErr) => {
       console.error(`[Firmware Stream] Stream error for ${version}:`, streamErr.message);
+      broadcastSse({
+        type: 'OTA_ERROR',
+        version,
+        message: streamErr.message
+      });
       if (!res.headersSent) {
         sendError(res, 500, 'Firmware transmission failed');
       }
     });
+
     stream.pipe(res);
   });
 
@@ -299,6 +359,23 @@ const server = http.createServer((req, res) => {
       uptime: process.uptime(),
       memory: process.memoryUsage(),
       timestamp: new Date().toISOString()
+    });
+    return;
+  }
+
+  // 1.1 Live SSE Firmware Progress Stream for OTA
+  if (reqPath === '/api/firmware/live-stream' || reqPath === '/api/ota/stream') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    });
+    res.write('data: {"type":"CONNECTED"}\n\n');
+    sseClients.add(res);
+
+    req.on('close', () => {
+      sseClients.delete(res);
     });
     return;
   }
