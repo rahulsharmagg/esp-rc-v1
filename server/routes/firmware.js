@@ -14,7 +14,7 @@ export function createFirmwareHandler({ firmwareRoot, adminPassword }) {
   /**
    * Handle Direct Binary Upload
    */
-  function handleUpload(req, res) {
+  function handleUpload(req, res, urlObj) {
     const contentType = req.headers['content-type'] || '';
     const chunks = [];
 
@@ -30,7 +30,22 @@ export function createFirmwareHandler({ firmwareRoot, adminPassword }) {
         let description = '';
         let binBuffer = null;
 
-        if (contentType.includes('multipart/form-data')) {
+        if (contentType.includes('application/json')) {
+          const jsonBody = JSON.parse(totalBuffer.toString('utf8'));
+          password = jsonBody.password || jsonBody.token || req.headers['x-admin-password'] || '';
+          version = jsonBody.version || '';
+          channel = jsonBody.channel || 'stable';
+          description = jsonBody.description || jsonBody.changelog || '';
+          isStable = jsonBody.isStable === true || jsonBody.isStable === 'true' || jsonBody.stable === true;
+          device = jsonBody.device || 'esp32-robot';
+
+          const b64Data = jsonBody.data || jsonBody.binary || jsonBody.file || jsonBody.firmware || '';
+          if (b64Data) {
+            // Strip potential data URL prefix
+            const cleanBase64 = b64Data.replace(/^data:[^;]+;base64,/, '');
+            binBuffer = Buffer.from(cleanBase64, 'base64');
+          }
+        } else if (contentType.includes('multipart/form-data')) {
           const boundaryMatch = contentType.match(/boundary=(?:["']?)([^"';]+)(?:["']?)/);
           if (!boundaryMatch) {
             sendError(res, 400, 'Invalid multipart boundary');
@@ -51,12 +66,12 @@ export function createFirmwareHandler({ firmwareRoot, adminPassword }) {
             binBuffer = fileEntry.data;
           }
         } else {
-          password = req.headers['x-admin-password'] || '';
-          version = req.headers['x-firmware-version'] || req.headers['x-version'] || '';
-          channel = req.headers['x-firmware-channel'] || req.headers['x-channel'] || 'stable';
-          description = decodeURIComponent(req.headers['x-firmware-description'] || req.headers['x-description'] || '');
-          isStable = req.headers['x-set-stable'] === 'true' || req.headers['x-stable'] === 'true';
-          device = req.headers['x-device'] || 'esp32-robot';
+          password = (urlObj && urlObj.searchParams.get('password')) || req.headers['x-admin-password'] || '';
+          version = (urlObj && urlObj.searchParams.get('version')) || req.headers['x-firmware-version'] || req.headers['x-version'] || '';
+          channel = (urlObj && urlObj.searchParams.get('channel')) || req.headers['x-firmware-channel'] || req.headers['x-channel'] || 'stable';
+          description = (urlObj && decodeURIComponent(urlObj.searchParams.get('description') || '')) || decodeURIComponent(req.headers['x-firmware-description'] || req.headers['x-description'] || '');
+          isStable = (urlObj && urlObj.searchParams.get('isStable') === 'true') || req.headers['x-set-stable'] === 'true' || req.headers['x-stable'] === 'true';
+          device = (urlObj && urlObj.searchParams.get('device')) || req.headers['x-device'] || 'esp32-robot';
           binBuffer = totalBuffer;
         }
 
@@ -180,7 +195,7 @@ export function createFirmwareHandler({ firmwareRoot, adminPassword }) {
 
     // 0. POST /api/firmware/upload
     if (reqPath === '/api/firmware/upload' && req.method === 'POST') {
-      handleUpload(req, res);
+      handleUpload(req, res, urlObj);
       return true;
     }
 

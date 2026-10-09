@@ -1,0 +1,17 @@
+# Disable Apache MultiViews (which causes 406 Not Acceptable on extensionless URLs)
+<IfModule mod_negotiation.c>
+  Options -MultiViews
+</IfModule>
+
+# Disable ModSecurity post scan filters that block binary/upload endpoints
+<IfModule mod_security.c>
+  SecFilterEngine Off
+  SecFilterScanPOST Off
+</IfModule>
+
+# Fallback headers for cross-origin and mime-types
+<IfModule mod_headers.c>
+  Header set Access-Control-Allow-Origin "*"
+  Header set Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE"
+  Header set Access-Control-Allow-Headers "*"
+</IfModule>
