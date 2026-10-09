@@ -1,13 +1,18 @@
-import { handleHealthRoutes } from './health.routes.js';
-import { handleFirmwareRoutes } from './firmware.routes.js';
-import { handleStaticRoutes } from './static.routes.js';
+import { HealthController } from '../controllers/health.controller.js';
+import { FirmwareController } from '../controllers/firmware.controller.js';
+import { StaticController } from '../controllers/static.controller.js';
 
+/**
+ * Single Route Registry Table & Master Request Dispatcher
+ * Maps all HTTP endpoints to corresponding Controller actions
+ */
 export function masterRouter(req, res) {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const reqPath = urlObj.pathname;
+  const { pathname } = urlObj;
+  const method = req.method;
 
-  // 1. Handle CORS Preflight
-  if (req.method === 'OPTIONS') {
+  // 1. Global CORS Preflight
+  if (method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, PUT, DELETE',
@@ -17,18 +22,54 @@ export function masterRouter(req, res) {
     return true;
   }
 
-  // 2. Health check routes
-  if (handleHealthRoutes(req, res, reqPath)) {
+  // ==========================================
+  // 2. Health Check Routes
+  // ==========================================
+  if (method === 'GET' && pathname === '/api/health') {
+    HealthController.getHealth(req, res);
     return true;
   }
 
-  // 3. Firmware API & Streaming routes
-  if (handleFirmwareRoutes(req, res, reqPath, urlObj)) {
+  // ==========================================
+  // 3. Firmware Management & Upload Routes
+  // ==========================================
+  if (method === 'POST' && pathname === '/api/firmware/upload') {
+    FirmwareController.handleUpload(req, res, urlObj);
     return true;
   }
 
-  // 4. Static PWA & SPA fallback routes
-  return handleStaticRoutes(req, res, reqPath);
+  if (method === 'GET' && pathname === '/api/firmware/latest') {
+    FirmwareController.getLatest(req, res, urlObj);
+    return true;
+  }
+
+  if (method === 'GET' && pathname === '/api/firmware/versions') {
+    FirmwareController.getVersions(req, res, urlObj);
+    return true;
+  }
+
+  const manifestMatch = pathname.match(/^\/api\/firmware\/([^\/]+)\/manifest$/);
+  if (method === 'GET' && manifestMatch) {
+    FirmwareController.getManifest(req, res, manifestMatch[1]);
+    return true;
+  }
+
+  const versionMatch = pathname.match(/^\/api\/firmware\/([^\/]+)$/);
+  if (method === 'GET' && versionMatch) {
+    FirmwareController.getVersionInfo(req, res, versionMatch[1], urlObj);
+    return true;
+  }
+
+  // ==========================================
+  // 4. Binary Streaming Routes (ESP32 OTA)
+  // ==========================================
+  const binaryMatch = pathname.match(/^\/firmware\/esp32\/([^\/]+)\/firmware\.bin$/);
+  if (method === 'GET' && binaryMatch) {
+    return FirmwareController.streamBinary(req, res, binaryMatch[1]);
+  }
+
+  // ==========================================
+  // 5. Static Files & SPA Fallback Route
+  // ==========================================
+  return StaticController.serveStatic(req, res, pathname);
 }
-
-export { handleHealthRoutes, handleFirmwareRoutes, handleStaticRoutes };
