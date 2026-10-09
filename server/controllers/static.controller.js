@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { PUBLIC_DIR } from '../config/index.js';
 import { sendError } from '../utils/response.js';
 
 const MIME_TYPES = {
@@ -15,25 +16,25 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.wasm': 'application/wasm',
-  '.bin': 'application/octet-stream'
+  '.bin': 'application/octet-stream',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf'
 };
 
-export function createStaticHandler({ publicDir }) {
-  const PUBLIC_DIR = publicDir;
-
-  return function handleStatic(req, res, reqPath) {
-
-    // 2. Prevent API and Firmware requests from ever falling back to index.html
+export class StaticController {
+  static serveStatic(req, res, reqPath) {
+    // 1. Prevent API and Firmware requests from ever falling back to index.html
     if (reqPath.startsWith('/api/')) {
       sendError(res, 404, `API route not found: ${reqPath}`);
       return true;
     }
     if (reqPath.startsWith('/firmware/')) {
-      sendError(res, 404, `Firmware file not found: ${reqPath}`);
+      sendError(res, 404, `Firmware binary not found: ${reqPath}`);
       return true;
     }
 
-    // 3. Static PWA & SPA Routing
+    // 2. Static File & SPA Routing Resolution
     let targetPath = reqPath;
     if (targetPath === '/' || targetPath === '') {
       targetPath = '/index.html';
@@ -42,13 +43,14 @@ export function createStaticHandler({ publicDir }) {
     const safePath = path.normalize(targetPath).replace(/^(\.\.[\/\\])+/, '');
     let filePath = path.join(PUBLIC_DIR, safePath);
 
+    // Fallback to index.html for SPA routes (e.g. /upload, /cockpit)
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
       filePath = path.join(PUBLIC_DIR, 'index.html');
     }
 
     fs.stat(filePath, (err, stats) => {
       if (err || !stats.isFile()) {
-        sendError(res, 404, '404 Not Found');
+        sendError(res, 404, '404 File Not Found');
         return;
       }
 
@@ -71,5 +73,5 @@ export function createStaticHandler({ publicDir }) {
     });
 
     return true;
-  };
+  }
 }
