@@ -16,9 +16,13 @@ const PORT = parseInt(process.env.PORT || '8080', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'rcadmin';
 
-const PUBLIC_DIR = fs.existsSync(path.join(ROOT_DIR, 'dist'))
-  ? path.join(ROOT_DIR, 'dist')
-  : ROOT_DIR;
+const PUBLIC_DIR = fs.existsSync(path.join(ROOT_DIR, 'public', 'index.html'))
+  ? path.join(ROOT_DIR, 'public')
+  : fs.existsSync(path.join(ROOT_DIR, 'dist', 'index.html'))
+    ? path.join(ROOT_DIR, 'dist')
+    : fs.existsSync(path.join(ROOT_DIR, 'public'))
+      ? path.join(ROOT_DIR, 'public')
+      : ROOT_DIR;
 
 const FIRMWARE_ROOT = path.join(ROOT_DIR, 'firmware');
 
