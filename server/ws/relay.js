@@ -10,7 +10,8 @@ export class WebSocketRelay {
     this.wss = new WebSocketServer({ noServer: true });
 
     this.wss.on('connection', (ws, req) => {
-      const clientIp = req.socket.remoteAddress || 'unknown';
+      const forwarded = req.headers['x-forwarded-for'];
+      const clientIp = (forwarded ? String(forwarded).split(',')[0].trim() : null) || req.headers['x-real-ip'] || req.socket.remoteAddress || 'unknown';
       console.log(`[WS Relay] Client connected from ${clientIp}`);
 
       ws.clientSessionCode = null;

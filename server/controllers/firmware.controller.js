@@ -3,7 +3,7 @@ import { FirmwareModel } from '../models/firmware.model.js';
 import { sendJson, sendError } from '../utils/response.js';
 import { SEMVER_REGEX } from '../utils/semver.js';
 import { parseMultipart } from '../utils/multipart.js';
-import { ADMIN_PASSWORD } from '../config/index.js';
+import { ADMIN_PASSWORD, MAX_UPLOAD_BYTES } from '../config/index.js';
 
 export class FirmwareController {
   /**
@@ -12,9 +12,23 @@ export class FirmwareController {
   static handleUpload(req, res, urlObj) {
     const contentType = req.headers['content-type'] || '';
     const chunks = [];
+    let receivedBytes = 0;
+    let aborted = false;
 
-    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('data', (chunk) => {
+      if (aborted) return;
+      receivedBytes += chunk.length;
+      if (receivedBytes > MAX_UPLOAD_BYTES) {
+        aborted = true;
+        req.destroy();
+        sendError(res, 413, 'Payload Too Large: Maximum allowed upload size is 10 MB');
+        return;
+      }
+      chunks.push(chunk);
+    });
+
     req.on('end', () => {
+      if (aborted) return;
       try {
         const totalBuffer = Buffer.concat(chunks);
         let password = '';
