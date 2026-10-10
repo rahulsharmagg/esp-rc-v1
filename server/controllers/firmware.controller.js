@@ -187,12 +187,22 @@ class FirmwareController {
    * Stream Raw Binary to ESP32
    */
   static streamBinary(req, res, version) {
-    if (!SEMVER_REGEX.test(version) || version.includes('..')) {
+    let targetVersion = version;
+    if (targetVersion === 'latest') {
+      const stable = FirmwareModel.getLatestStable();
+      if (!stable || !stable.version) {
+        sendError(res, 404, 'No stable firmware version found');
+        return true;
+      }
+      targetVersion = stable.version;
+    }
+
+    if (!SEMVER_REGEX.test(targetVersion) || targetVersion.includes('..')) {
       sendError(res, 400, 'Invalid firmware version');
       return true;
     }
 
-    const binaryPath = FirmwareModel.getBinaryPath(version);
+    const binaryPath = FirmwareModel.getBinaryPath(targetVersion);
     if (!fs.existsSync(binaryPath)) {
       sendError(res, 404, 'Firmware binary not found');
       return true;

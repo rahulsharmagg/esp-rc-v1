@@ -63,7 +63,7 @@ function masterRouter(req, res) {
   // ==========================================
   // 4. Binary Streaming Routes (ESP32 OTA)
   // ==========================================
-  const binaryMatch = pathname.match(/^\/firmware\/esp32\/([^\/]+)\/firmware\.bin$/);
+  const binaryMatch = pathname.match(/^\/firmware\/esp32\/([^\/]+)\/firmware\.bin(:[^\/]+)?$/);
   if (method === 'GET' && binaryMatch) {
     return FirmwareController.streamBinary(req, res, binaryMatch[1]);
   }
