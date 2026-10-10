@@ -3,6 +3,7 @@ import type {
   LogEntry, 
   WifiNetwork, 
   WifiStatus,
+  OtaStatus,
   FirmwareVersionInfo,
   FirmwareLatestResponse,
   FirmwareVersionsResponse
@@ -19,12 +20,22 @@ export class BLEController {
   deviceName = $state('DISCONNECTED');
   latency = $state(0);
 
+  // Direct LAN Wi-Fi WebSocket Link
+  isWifiWsConnected = $state(false);
+  isConnectingWifiWs = $state(false);
+  private wifiWs: WebSocket | null = null;
+  activeConnectionMode = $derived<'BLE' | 'LAN' | 'HYBRID' | 'OFFLINE'>(
+    this.isConnected && this.isWifiWsConnected ? 'HYBRID' :
+    this.isWifiWsConnected ? 'LAN' :
+    this.isConnected ? 'BLE' : 'OFFLINE'
+  );
+
   // Telemetry
   uptime = $state('00:00');
   driveMode = $state<DriveMode>('MANUAL');
   batteryPct = $state(-1);
   batteryVolts = $state(0.0);
-  hasBattery = $derived(this.batteryPct >= 0 && this.batteryVolts >= 1.0);
+  hasBattery = $derived(this.batteryPct >= 0 && this.batteryVolts >= 5.0);
   distance = $state(300);
   irLeft = $state(false);
   irRight = $state(false);
@@ -86,12 +97,14 @@ export class BLEController {
   isScanningWifi = $state(false);
 
   // OTA Firmware Update State
-  otaStatus = $state<'IDLE' | 'CHECKING' | 'AVAILABLE' | 'UPDATING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  otaStatus = $state<OtaStatus>('IDLE');
   otaProgress = $state(0);
   otaMessage = $state('');
   currentFirmwareVer = $state('1.0.2');
   latestFirmwareVer = $state('1.0.2');
+  targetFlashingVersion = $state<string>('');
   hasFirmwareUpdate = $state(false);
+  latestFirmwareDescription = $state<string>('');
   availableVersions = $state<FirmwareVersionInfo[]>([]);
   selectedVersion = $state<string>('');
   isCheckingFirmware = $state(false);
@@ -223,13 +236,31 @@ export class BLEController {
           { namePrefix: 'RC' },
           { services: [NORDIC_UART_SERVICE_UUID] }
         ],
-        optionalServices: [NORDIC_UART_SERVICE_UUID]
+        optionalServices: [NORDIC_UART_SERVICE_UUID, 'device_information', 0x180a]
       });
 
       this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnected());
 
       this.log(`Connecting to GATT Server [${this.device.name || 'ESP32'}]...`);
       this.server = await this.device.gatt!.connect();
+
+      // Read standard Device Information Service (UUID 0x180A) if present
+      try {
+        const disService = await this.server.getPrimaryService(0x180a);
+        if (disService) {
+          const fwChar = await disService.getCharacteristic(0x2a26); // Firmware Revision
+          if (fwChar) {
+            const fwVal = await fwChar.readValue();
+            const fwStr = new TextDecoder().decode(fwVal).trim();
+            if (fwStr) {
+              this.currentFirmwareVer = fwStr;
+              this.log(`Device reported Firmware: v${fwStr} via DIS`, 'info');
+            }
+          }
+        }
+      } catch (_) {
+        // Fallback to UART query if DIS read fails
+      }
 
       this.log('Accessing Nordic UART Primary Service...');
       const service = await this.server.getPrimaryService(NORDIC_UART_SERVICE_UUID);
@@ -280,9 +311,68 @@ export class BLEController {
     this.vibrate([100, 50, 100]);
 
     if (this.otaStatus === 'UPDATING') {
-      this.otaMessage = 'Bluetooth disconnected. ESP32 is flashing over Wi-Fi and rebooting...';
-      this.log('ℹ️ Bluetooth connection dropped during OTA update. ESP32 reboots automatically on flash success.', 'info');
+      this.otaProgress = 85;
+      this.otaMessage = 'ESP32 is downloading and flashing over Wi-Fi. It will auto-reboot in ~15-20s. Click RECONNECT once rebooted.';
+      this.log('ℹ️ BLE disconnected while ESP32 streams firmware over Wi-Fi. Reconnect once ESP32 reboots.', 'info');
     }
+  }
+
+  connectWifiLan(targetIp?: string) {
+    const ip = targetIp || this.wifi.ip;
+    if (!ip || ip === '0.0.0.0') {
+      this.log('Cannot connect LAN WebSocket: ESP32 has no valid IP address', 'error');
+      return;
+    }
+    if (this.wifiWs) {
+      this.wifiWs.close();
+      this.wifiWs = null;
+    }
+
+    try {
+      this.isConnectingWifiWs = true;
+      const wsUrl = `ws://${ip}:81`;
+      this.log(`Connecting directly to ESP32 over Wi-Fi LAN [${wsUrl}]...`, 'info');
+      this.wifiWs = new WebSocket(wsUrl);
+
+      this.wifiWs.onopen = () => {
+        this.isWifiWsConnected = true;
+        this.isConnectingWifiWs = false;
+        this.log(`✅ Direct Wi-Fi LAN Connected (${ip}:81)! Long-range control active.`, 'success');
+        this.vibrate([30, 40, 30]);
+        this.sendCommand('OTA:VERSION', true);
+        this.sendCommand('WIFI:STATUS', true);
+      };
+
+      this.wifiWs.onmessage = (e) => {
+        if (typeof e.data === 'string') {
+          this.handleIncomingMessage(e.data.trim());
+        }
+      };
+
+      this.wifiWs.onerror = () => {
+        this.isConnectingWifiWs = false;
+        this.log(`Could not connect LAN WebSocket to ${ip}:81.`, 'warn');
+      };
+
+      this.wifiWs.onclose = () => {
+        this.isWifiWsConnected = false;
+        this.isConnectingWifiWs = false;
+        this.wifiWs = null;
+        this.log('LAN Wi-Fi WebSocket disconnected.', 'info');
+      };
+    } catch (err: any) {
+      this.isConnectingWifiWs = false;
+      this.log(`LAN WebSocket error: ${err.message}`, 'error');
+    }
+  }
+
+  disconnectWifiLan() {
+    if (this.wifiWs) {
+      this.wifiWs.close();
+      this.wifiWs = null;
+    }
+    this.isWifiWsConnected = false;
+    this.isConnectingWifiWs = false;
   }
 
   private isWriting = false;
@@ -298,17 +388,27 @@ export class BLEController {
       return;
     }
 
-    this.pendingCommand = cmd;
-    const now = Date.now();
-    const elapsed = now - this.lastSentTimestamp;
+    // 1. Direct Wi-Fi LAN WebSocket Transmission (Instant, <5ms latency)
+    if (this.isWifiWsConnected && this.wifiWs && this.wifiWs.readyState === WebSocket.OPEN) {
+      try {
+        this.wifiWs.send(cmd);
+      } catch (_) {}
+    }
 
-    if (elapsed >= this.minSendIntervalMs && !this.isWriting) {
-      this.flushCommand();
-    } else if (!this.sendTimer) {
-      this.sendTimer = setTimeout(() => {
-        this.sendTimer = null;
+    // 2. Queue for Bluetooth Transmission if BLE is active
+    if (this.isConnected && this.rxChar) {
+      this.pendingCommand = cmd;
+      const now = Date.now();
+      const elapsed = now - this.lastSentTimestamp;
+
+      if (elapsed >= this.minSendIntervalMs && !this.isWriting) {
         this.flushCommand();
-      }, Math.max(10, this.minSendIntervalMs - elapsed));
+      } else if (!this.sendTimer) {
+        this.sendTimer = setTimeout(() => {
+          this.sendTimer = null;
+          this.flushCommand();
+        }, Math.max(10, this.minSendIntervalMs - elapsed));
+      }
     }
   }
 
@@ -429,12 +529,28 @@ export class BLEController {
 
   connectToWifi(ssid: string, pass: string) {
     this.log(`Connecting ESP32 to Wi-Fi SSID [${ssid}]...`, 'info');
-    this.sendCommand(`WIFI:CONN:${ssid}:${pass}`, true);
+    try {
+      const b64Ssid = btoa(unescape(encodeURIComponent(ssid)));
+      const b64Pass = pass ? btoa(unescape(encodeURIComponent(pass))) : '';
+      this.sendCommand(`WIFI:CONNB:${b64Ssid}:${b64Pass}`, true);
+    } catch (_) {
+      this.sendCommand(`WIFI:CONN:${ssid}:${pass}`, true);
+    }
   }
 
   disconnectWifi() {
     this.sendCommand('WIFI:DISC', true);
     this.log('Disconnecting ESP32 from Wi-Fi AP...', 'warn');
+  }
+
+  autoConnectWifi() {
+    this.sendCommand('WIFI:AUTO', true);
+    this.log('Requesting ESP32 to auto-connect to saved Wi-Fi...', 'info');
+  }
+
+  clearSavedWifi() {
+    this.sendCommand('WIFI:CLEAR', true);
+    this.log('Clearing saved Wi-Fi credentials on ESP32...', 'warn');
   }
 
   // OTA Firmware Update & Version History Methods
@@ -460,6 +576,7 @@ export class BLEController {
         const latest: FirmwareLatestResponse = await latestRes.json();
         if (latest && latest.version) {
           this.latestFirmwareVer = latest.version;
+          this.latestFirmwareDescription = latest.description || '';
           this.hasFirmwareUpdate = this.latestFirmwareVer !== this.currentFirmwareVer;
           this.otaStatus = this.hasFirmwareUpdate ? 'AVAILABLE' : 'IDLE';
           this.otaMessage = this.hasFirmwareUpdate 
@@ -468,6 +585,7 @@ export class BLEController {
         } else {
           this.hasFirmwareUpdate = false;
           this.latestFirmwareVer = this.currentFirmwareVer;
+          this.latestFirmwareDescription = '';
           this.otaStatus = 'IDLE';
           this.otaMessage = `Firmware is up to date (v${this.currentFirmwareVer}).`;
         }
@@ -504,6 +622,89 @@ export class BLEController {
     }
   }
 
+  private cloudWs: WebSocket | null = null;
+  private currentOtaSessionCode: string = '';
+
+  private connectCloudWsForOta(sessionCode: string) {
+    if (typeof window === 'undefined') return;
+    if (this.cloudWs) {
+      this.cloudWs.close();
+      this.cloudWs = null;
+    }
+
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host || 'rc.codeblaze.in';
+      const wsUrl = `${protocol}//${host}/ws`;
+
+      this.log(`Connecting to Cloud WebSocket Relay [${wsUrl}] for OTA Session [${sessionCode}]...`, 'info');
+      this.cloudWs = new WebSocket(wsUrl);
+
+      this.cloudWs.onopen = () => {
+        this.log(`🔗 Connected to Cloud WS Relay. Subscribing to session: ${sessionCode}`, 'info');
+        this.cloudWs?.send(JSON.stringify({
+          type: 'REGISTER_SESSION',
+          sessionCode,
+          role: 'browser'
+        }));
+      };
+
+      this.cloudWs.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'ESP_ATTACHED') {
+            this.log(`ESP32 attached to OTA session [${sessionCode}]. Flash stream starting...`, 'info');
+            this.otaStatus = 'UPDATING';
+            this.otaProgress = Math.max(5, this.otaProgress);
+            this.otaMessage = 'ESP32 connected to OTA session! Beginning binary stream...';
+          } else if (data.type === 'OTA_START') {
+            this.otaProgress = 5;
+            this.otaStatus = 'UPDATING';
+            this.otaMessage = data.message || 'ESP32 connected! Streaming firmware...';
+            this.log(`📡 [WS OTA] ${this.otaMessage}`, 'info');
+          } else if (data.type === 'OTA_PROGRESS') {
+            this.otaProgress = Math.max(5, data.pct || 0);
+            this.otaStatus = 'UPDATING';
+            const kbSent = Math.round((data.bytesSent || 0) / 1024);
+            const kbTotal = Math.round((data.totalSize || 0) / 1024);
+            this.otaMessage = data.status === 'REBOOTING' || data.pct >= 100
+              ? 'Flashing complete! ESP32 is rebooting...'
+              : `Flashing over Wi-Fi: ${data.pct}%${kbTotal > 0 ? ` (${kbSent}KB / ${kbTotal}KB)` : ''}`;
+            this.log(`📡 [WS OTA] ${data.pct}% - ${this.otaMessage}`, 'info');
+          } else if (data.type === 'OTA_COMPLETE') {
+            this.otaProgress = 100;
+            this.otaStatus = 'SUCCESS';
+            this.otaMessage = 'Firmware 100% written to Flash! ESP32 is rebooting...';
+            this.log('✅ ESP32 Firmware OTA Complete! Rebooting...', 'success');
+            this.vibrate([100, 50, 100, 50, 200]);
+            if (this.cloudWs) {
+              this.cloudWs.close();
+              this.cloudWs = null;
+            }
+          } else if (data.type === 'OTA_ERROR') {
+            this.otaStatus = 'ERROR';
+            this.otaMessage = data.message || 'OTA Update Failed';
+            this.log(`❌ OTA Streaming Error: ${this.otaMessage}`, 'error');
+            if (this.cloudWs) {
+              this.cloudWs.close();
+              this.cloudWs = null;
+            }
+          }
+        } catch (_) {}
+      };
+
+      this.cloudWs.onerror = (err) => {
+        console.warn('[Cloud WS Error]', err);
+      };
+
+      this.cloudWs.onclose = () => {
+        this.cloudWs = null;
+      };
+    } catch (err: any) {
+      this.log(`Cloud WebSocket connection error: ${err.message}`, 'warn');
+    }
+  }
+
   startFirmwareUpdate(targetVersionOrUrl?: string) {
     if (!this.wifi.connected) {
       this.log('Cannot perform OTA: ESP32 is not connected to Wi-Fi!', 'error');
@@ -513,21 +714,35 @@ export class BLEController {
     }
 
     const versionToFlash = targetVersionOrUrl || this.selectedVersion || this.latestFirmwareVer;
+    this.targetFlashingVersion = versionToFlash;
     this.otaStatus = 'UPDATING';
     this.otaProgress = 5;
-    this.otaMessage = `Initiating OTA flash for v${versionToFlash}...`;
+    this.otaMessage = `Initiating Wi-Fi binary stream for v${versionToFlash}...`;
     this.log(`🚀 Initiating ESP32 Over-The-Air (OTA) Flash for firmware v${versionToFlash}...`, 'warn');
     this.vibrate([50, 50, 50]);
 
-    // Construct full download URL for ESP32 (HTTP port 80 avoids TLS memory exhaustion during BLE coexistence)
+    // Generate unique session code for targeted WebSocket OTA progress routing
+    const sessionCode = 'ota_' + Math.random().toString(36).substring(2, 8);
+    this.currentOtaSessionCode = sessionCode;
+
+    // Connect to Cloud WebSocket server for dedicated session progress
+    this.connectCloudWsForOta(sessionCode);
+
+    // Construct full download URL for ESP32
     let downloadUrl = versionToFlash;
     if (!versionToFlash.startsWith('http://') && !versionToFlash.startsWith('https://')) {
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const espOrigin = origin.startsWith('https://') ? origin.replace('https://', 'http://') : origin;
+      let espOrigin = 'https://rc.codeblaze.in';
+      if (typeof window !== 'undefined') {
+        const hostname = window.location.hostname;
+        if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+          espOrigin = `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ''}`;
+        }
+      }
       downloadUrl = `${espOrigin}/firmware/esp32/${versionToFlash}/firmware.bin`;
     }
 
-    this.sendCommand(`OTA:UPDATE:${downloadUrl}`, true);
+    // Send OTA update command with sessionCode: OTA:UPDATE:<url>:<sessionCode>
+    this.sendCommand(`OTA:UPDATE:${downloadUrl}:${sessionCode}`, true);
   }
 
   // Handle incoming UART Telemetry & BLE Messages
@@ -542,6 +757,11 @@ export class BLEController {
 
     const decoder = new TextDecoder('utf-8');
     const message = decoder.decode(char.value).trim();
+    if (!message) return;
+    this.handleIncomingMessage(message);
+  }
+
+  handleIncomingMessage(message: string) {
     if (!message) return;
 
     // 1. T:<uptime_sec>,<dist>,<ir_l>,<ir_r>,<servo>,<bat_pct>,<bat_v>,<mode>
@@ -571,6 +791,28 @@ export class BLEController {
       this.isScanningWifi = true;
       this.wifiNetworks = [];
       this.log('Listening for Wi-Fi beacon packets from ESP32...', 'info');
+    }
+    else if (message.startsWith('WIFI_NETB:')) {
+      const parts = message.substring(10).split(':');
+      if (parts.length >= 3) {
+        let ssid = parts[0];
+        try {
+          ssid = decodeURIComponent(escape(atob(parts[0])));
+        } catch (_) {
+          try { ssid = atob(parts[0]); } catch (_) {}
+        }
+        if (ssid.trim().length > 0) {
+          const rssi = parseInt(parts[1], 10) || -80;
+          const isEncrypted = parts[2] === '1';
+          const existingIdx = this.wifiNetworks.findIndex(n => n.ssid === ssid);
+          if (existingIdx !== -1) {
+            this.wifiNetworks[existingIdx].rssi = rssi;
+          } else {
+            this.wifiNetworks.push({ ssid, rssi, isEncrypted });
+          }
+          this.wifiNetworks.sort((a, b) => b.rssi - a.rssi);
+        }
+      }
     }
     else if (message.startsWith('WIFI_NET:')) {
       const parts = message.substring(9).split(':');
@@ -626,15 +868,31 @@ export class BLEController {
 
       if (state === 'OFF') {
         this.wifi = { enabled: false, connected: false, ssid: '', ip: '0.0.0.0', rssi: 0 };
+        this.disconnectWifiLan();
       } else if (state === 'CONNECTED') {
         this.wifi = { enabled: true, connected: true, ssid, ip, rssi };
         this.log(`Wi-Fi Connected! IP: ${ip} (SSID: ${ssid})`, 'success');
         this.checkFirmwareUpdate();
+        if (ip && ip !== '0.0.0.0' && !this.isWifiWsConnected && !this.isConnectingWifiWs) {
+          this.connectWifiLan(ip);
+        }
       } else {
         this.wifi = { enabled: true, connected: false, ssid: '', ip: '0.0.0.0', rssi: 0 };
+        this.disconnectWifiLan();
       }
     }
     // 4. OTA Firmware Notification Handlers
+    else if (message.startsWith('OTA_READY:')) {
+      const parts = message.substring(10).split(':');
+      const ip = parts[0] || this.wifi.ip;
+      this.log(`🚀 ESP32 OTA Ready! Connecting to direct WebSocket ws://${ip}:81. Bluetooth shutting down...`, 'info');
+      this.otaStatus = 'UPDATING';
+      this.otaProgress = 5;
+      this.otaMessage = 'Connecting to ESP32 local WebSocket for live flash progress...';
+      if (ip && ip !== '0.0.0.0') {
+        this.connectWifiLan(ip);
+      }
+    }
     else if (message.startsWith('OTA_PROGRESS:')) {
       const parts = message.substring(13).split(':');
       this.otaProgress = parseInt(parts[0], 10) || 0;
@@ -657,7 +915,13 @@ export class BLEController {
     else if (message.startsWith('FIRMWARE_VER:')) {
       this.currentFirmwareVer = message.substring(13).trim();
       this.hasFirmwareUpdate = this.latestFirmwareVer !== this.currentFirmwareVer;
-      if (!this.hasFirmwareUpdate) {
+      if (this.targetFlashingVersion && this.currentFirmwareVer === this.targetFlashingVersion) {
+        this.otaStatus = 'SUCCESS';
+        this.otaProgress = 100;
+        this.otaMessage = `Updated to v${this.currentFirmwareVer} successfully!`;
+        this.log(`🎉 OTA Flash Verified: ESP32 running v${this.currentFirmwareVer}!`, 'success');
+        this.targetFlashingVersion = '';
+      } else if (!this.hasFirmwareUpdate) {
         this.otaStatus = 'IDLE';
         this.otaMessage = `Firmware is up to date (v${this.currentFirmwareVer}).`;
       }

@@ -44,12 +44,18 @@ export interface SensorStatus {
   details: string;
 }
 
+export type OtaStatus = 'IDLE' | 'CHECKING' | 'AVAILABLE' | 'UPDATING' | 'SUCCESS' | 'ERROR';
+
 export interface FirmwareVersionInfo {
   version: string;
-  channel: string;
+  channel?: string;
+  isStable?: boolean;
+  device?: string;
   size: number;
   sha256: string;
   releasedAt: string;
+  url?: string;
+  description?: string;
 }
 
 export interface FirmwareLatestResponse {
@@ -59,6 +65,7 @@ export interface FirmwareLatestResponse {
   firmware: string;
   sha256: string;
   size: number;
+  description?: string;
   releasedAt: string;
 }
 

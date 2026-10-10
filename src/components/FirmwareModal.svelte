@@ -12,7 +12,8 @@
     ShieldCheck, 
     RotateCcw,
     History,
-    DownloadCloud
+    DownloadCloud,
+    UploadCloud
   } from '@lucide/svelte';
 
   interface Props {
@@ -20,9 +21,10 @@
     isOpen: boolean;
     onClose: () => void;
     onOpenWifi?: () => void;
+    onOpenUpload?: () => void;
   }
 
-  let { ble, isOpen, onClose, onOpenWifi }: Props = $props();
+  let { ble, isOpen, onClose, onOpenWifi, onOpenUpload }: Props = $props();
 
   let wasOpen = $state(false);
 
@@ -87,6 +89,7 @@
             </div>
             <div class="settings-row-right">
               <button 
+                type="button"
                 class="test-btn" 
                 onclick={() => ble.checkFirmwareUpdate()}
                 disabled={ble.isCheckingFirmware || ble.otaStatus === 'UPDATING'}
@@ -111,6 +114,19 @@
               <div style="font-size: 0.55rem; color: #a1a1aa; margin-top: 4px; font-family: var(--font-mono);">
                 {ble.otaMessage || 'Streaming binary chunks over Wi-Fi...'}
               </div>
+              {#if !ble.isConnected}
+                <div style="margin-top: 8px; text-align: right;">
+                  <button 
+                    type="button"
+                    class="test-btn primary" 
+                    onclick={() => ble.connect()}
+                    style="background: #2563eb; color: #ffffff; border-color: #1d4ed8;"
+                  >
+                    <RotateCcw size={11} style="margin-right: 3px;" />
+                    RECONNECT BLUETOOTH
+                  </button>
+                </div>
+              {/if}
             </div>
           {:else if ble.otaStatus === 'SUCCESS'}
             <div style="margin: 8px 0; padding: 8px 10px; background: #f0fdf4; border: 1px solid #22c55e; border-radius: 0px; display: flex; align-items: center; gap: 6px;">
@@ -129,13 +145,20 @@
             <div class="settings-row settings-action-row" style="border-top: 1px solid #f1f5f9;">
               <div class="settings-row-left">
                 <span class="settings-item-title" style="color: #c2410c;">Install Update v{ble.latestFirmwareVer}</span>
-                <span class="settings-item-sub">Over-The-Air automatic flash and restart</span>
+                {#if ble.latestFirmwareDescription}
+                  <span class="settings-item-sub font-mono" style="color: #9a3412;">
+                    Features: {ble.latestFirmwareDescription}
+                  </span>
+                {:else}
+                  <span class="settings-item-sub">Over-The-Air automatic flash and restart</span>
+                {/if}
               </div>
               <div class="settings-row-right">
                 <button 
+                  type="button"
                   class="test-btn primary" 
                   onclick={() => ble.startFirmwareUpdate(ble.latestFirmwareVer)}
-                  disabled={!ble.wifi.connected || ble.otaStatus === 'UPDATING'}
+                  disabled={!ble.wifi.connected}
                 >
                   <DownloadCloud size={12} style="margin-right: 3px;" />
                   INSTALL NOW
@@ -192,6 +215,7 @@
 
               <div>
                 <button 
+                  type="button"
                   class="test-btn" 
                   onclick={() => ble.startFirmwareUpdate(ble.selectedVersion)}
                   disabled={!ble.wifi.connected || ble.otaStatus === 'UPDATING' || !ble.selectedVersion}
@@ -219,6 +243,12 @@
                     <span style="font-size: 0.58rem; font-weight: 800; color: #2563eb; font-family: var(--font-mono);" title={selectedManifest.sha256}>
                       {selectedManifest.sha256.substring(0, 14)}...
                     </span>
+                  </div>
+                {/if}
+                {#if selectedManifest.description}
+                  <div style="grid-column: 1 / -1; margin-top: 4px; padding-top: 4px; border-top: 1px dashed #e2e8f0;">
+                    <span style="font-size: 0.52rem; font-weight: 700; color: #94a3b8; font-family: var(--font-mono); display: block;">Release Notes:</span>
+                    <span style="font-size: 0.6rem; color: #334155; font-family: var(--font-mono);">{selectedManifest.description}</span>
                   </div>
                 {/if}
               </div>
@@ -252,7 +282,7 @@
               {#if ble.wifi.connected}
                 <span class="settings-badge ok">READY</span>
               {:else if onOpenWifi}
-                <button class="test-btn primary" onclick={() => { onClose(); onOpenWifi?.(); }}>
+                <button type="button" class="test-btn primary" onclick={() => { onClose(); onOpenWifi?.(); }}>
                   CONNECT WI-FI
                 </button>
               {/if}
@@ -264,8 +294,12 @@
     </div>
 
     <!-- Footer -->
-    <div class="modal-footer">
-      <button class="test-btn primary" onclick={onClose} style="min-width: 90px;">
+    <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+      <button type="button" class="test-btn" onclick={() => { onClose(); onOpenUpload?.(); }}>
+        <UploadCloud size={12} style="margin-right: 4px;" />
+        RELEASE PORTAL
+      </button>
+      <button type="button" class="test-btn primary" onclick={onClose} style="min-width: 90px;">
         DONE
       </button>
     </div>

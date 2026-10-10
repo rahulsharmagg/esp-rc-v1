@@ -1,0 +1,9 @@
+{
+  "device": "esp32-robot",
+  "version": "1.0.5",
+  "channel": "stable",
+  "firmware": "firmware.bin",
+  "size": 1835040,
+  "sha256": "1f4429596ea90a247b7fc62c791c25817cebc55c6a695766ceb69ad24ee55eb3",
+  "releasedAt": "2026-10-08T15:33:14.675Z"
+}

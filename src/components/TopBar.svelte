@@ -60,7 +60,7 @@
 <header class="cockpit-top-bar">
   <!-- Brand / Title -->
   <div class="top-left">
-    <img src="/ESP-RC-LOGO.svg" alt="ESP-RC Logo" class="bar-logo" />
+    <img src="/logo.svg" alt="ESP-RC Logo" class="bar-logo" />
     <div class="bar-title-wrap">
       <span class="bar-title">ESP-RC</span>
       <span class="bar-latency">{ble.latency > 0 ? `${ble.latency} ms` : '-- ms'}</span>
@@ -144,11 +144,21 @@
     </button>
   </div>
 
-  <!-- Bluetooth Pairing Status & Connect Button -->
+  <!-- Connection Status (BLE / LAN / HYBRID) & Connect Button -->
   <div class="top-right">
-    <div class="status-badge" title="Bluetooth Status">
-      <span class="status-dot {ble.isConnected ? 'connected' : ''}"></span>
-      <span class="status-text">{ble.deviceName}</span>
+    <div class="status-badge" title="Active Connection Mode: {ble.activeConnectionMode}">
+      <span class="status-dot {ble.activeConnectionMode !== 'OFFLINE' ? 'connected' : ''}"></span>
+      <span class="status-text">
+        {#if ble.activeConnectionMode === 'HYBRID'}
+          HYBRID (BLE+LAN)
+        {:else if ble.activeConnectionMode === 'LAN'}
+          LAN ({ble.wifi.ip || 'Wi-Fi'})
+        {:else if ble.activeConnectionMode === 'BLE'}
+          {ble.deviceName}
+        {:else}
+          DISCONNECTED
+        {/if}
+      </span>
     </div>
 
     {#if !ble.isConnected}

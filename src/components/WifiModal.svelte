@@ -30,7 +30,8 @@
   function handleSelectNetwork(net: WifiNetwork) {
     if (net.isEncrypted) {
       selectedSsid = net.ssid;
-      passwordInput = '';
+      const saved = (typeof localStorage !== 'undefined') ? localStorage.getItem('wifi_pwd_' + net.ssid) : null;
+      passwordInput = saved || '';
       showPassword = false;
       showPasswordModal = true;
     } else {
@@ -42,6 +43,9 @@
 
   function handleConnectSelected() {
     if (selectedSsid) {
+      if (typeof localStorage !== 'undefined' && passwordInput) {
+        localStorage.setItem('wifi_pwd_' + selectedSsid, passwordInput);
+      }
       ble.connectToWifi(selectedSsid, passwordInput);
       closePasswordModal();
     }
@@ -286,13 +290,18 @@
         aria-modal="true"
         aria-label="Wi-Fi Password Dialog"
       >
-        <div class="pwd-modal-dialog">
+        <form 
+          class="pwd-modal-dialog" 
+          action="/api/wifi/connect" 
+          method="post"
+          onsubmit={(e) => { e.preventDefault(); handleConnectSelected(); }}
+        >
           <div class="pwd-modal-header">
             <div style="display: flex; align-items: center; gap: 6px;">
               <KeyRound size={15} color="#dc2626" strokeWidth={2.5} />
               <span class="pwd-modal-title">ENTER PASSWORD</span>
             </div>
-            <button class="pwd-close-btn" onclick={closePasswordModal} title="Cancel">
+            <button type="button" class="pwd-close-btn" onclick={closePasswordModal} title="Cancel">
               <X size={14} strokeWidth={2.5} />
             </button>
           </div>
@@ -302,12 +311,25 @@
               Connect to <strong style="color: var(--black-solid);">{selectedSsid}</strong>
             </div>
 
+            <!-- Hidden identifier field for autofill isolation -->
+            <input 
+              type="hidden" 
+              id="rc_wifi_ssid" 
+              name="rc_wifi_ssid" 
+              value={selectedSsid} 
+              autocomplete="username" 
+            />
+
             <div class="pwd-input-wrap">
+              <label for="rc_wifi_password" class="sr-only" style="display: none;">Wi-Fi Password</label>
               <input 
                 type={showPassword ? 'text' : 'password'}
+                id="rc_wifi_password"
+                name="rc_wifi_password"
                 class="pwd-text-input"
                 placeholder="Enter WPA/WPA2 password..."
                 bind:value={passwordInput}
+                autocomplete="current-password"
                 onkeydown={(e) => e.key === 'Enter' && handleConnectSelected()}
               />
               <button 
@@ -326,14 +348,14 @@
           </div>
 
           <div class="pwd-modal-footer">
-            <button class="test-btn" onclick={closePasswordModal}>
+            <button type="button" class="test-btn" onclick={closePasswordModal}>
               CANCEL
             </button>
-            <button class="test-btn primary" onclick={handleConnectSelected}>
+            <button type="submit" class="test-btn primary">
               CONNECT
             </button>
           </div>
-        </div>
+        </form>
       </div>
     {/if}
   </div>

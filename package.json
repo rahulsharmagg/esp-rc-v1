@@ -8,11 +8,16 @@
     "build": "vite build",
     "build:push": "node scripts/deploy-build.js",
     "preview": "vite preview",
-    "serve": "node server.js",
+    "start": "node server/app.js",
+    "server": "node server/app.js",
+    "serve": "node server/app.js",
+    "server:dev": "node server/app.js",
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
+    "@types/node": "^26.6.3",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-basic-ssl": "^1.1.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
@@ -21,6 +26,7 @@
     "vite-plugin-pwa": "^0.20.5"
   },
   "dependencies": {
-    "@lucide/svelte": "^1.48.0"
+    "@lucide/svelte": "^1.48.0",
+    "ws": "^8.22.0"
   }
 }

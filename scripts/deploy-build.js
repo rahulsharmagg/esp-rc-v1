@@ -24,25 +24,51 @@ try {
   run(`git worktree add -B build "${tempWorktreeDir}" origin/build`);
 
   console.log('\n📂 3. Synchronizing production files...');
-  const distDir = path.resolve('dist');
-  fs.cpSync(distDir, tempWorktreeDir, { recursive: true });
-
-  if (fs.existsSync('server.js')) {
-    fs.copyFileSync('server.js', path.join(tempWorktreeDir, 'server.js'));
+  // Wipe old structure from worktree (except .git)
+  for (const item of fs.readdirSync(tempWorktreeDir)) {
+    if (item === '.git') continue;
+    fs.rmSync(path.join(tempWorktreeDir, item), { recursive: true, force: true });
   }
 
-  if (fs.existsSync('firmware')) {
-    fs.cpSync('firmware', path.join(tempWorktreeDir, 'firmware'), { recursive: true });
+  // 1. Copy all compiled static frontend assets to public/
+  const distDir = path.resolve('dist');
+  const publicDest = path.join(tempWorktreeDir, 'public');
+  fs.mkdirSync(publicDest, { recursive: true });
+  fs.cpSync(distDir, publicDest, { recursive: true });
+
+  // 2. Copy backend server files
+  const prodServerJs = `/**
+ * ESP32 RC Car Zero-Dependency Production Server
+ * Entry point delegating to modular server structure in /server
+ */
+const { server, startServer, wsRelay } = require('./server/app.js');
+
+startServer();
+
+module.exports = {
+  server,
+  startServer,
+  wsRelay
+};
+`;
+  fs.writeFileSync(path.join(tempWorktreeDir, 'server.js'), prodServerJs);
+
+  if (fs.existsSync('server')) {
+    fs.cpSync('server', path.join(tempWorktreeDir, 'server'), { recursive: true });
   }
 
   const prodPkg = {
     name: 'esp-rc-production',
     version: '4.0.0',
     private: true,
-    type: 'module',
+    main: 'server/app.js',
+    type: 'commonjs',
     scripts: {
-      start: 'node server.js',
-      serve: 'node server.js'
+      start: 'node server/app.js',
+      serve: 'node server/app.js'
+    },
+    dependencies: {
+      ws: '^8.22.0'
     }
   };
   fs.writeFileSync(path.join(tempWorktreeDir, 'package.json'), JSON.stringify(prodPkg, null, 2));

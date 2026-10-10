@@ -91,7 +91,7 @@
 <div class="loading-screen {isReady ? 'hidden' : ''}">
   <div class="loading-card">
     <div class="loading-logo-box">
-      <img src="/ESP-RC-LOGO.svg" alt="ESP-RC Logo" class="loading-icon" />
+      <img src="/logo.svg" alt="ESP-RC Logo" class="loading-icon" />
       <div class="logo-pulse-ring"></div>
     </div>
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { BLEController } from './lib/ble.svelte';
+  import { router } from './lib/router.svelte';
   import LoadingScreen from './components/LoadingScreen.svelte';
   import RotateNotice from './components/RotateNotice.svelte';
   import TopBar from './components/TopBar.svelte';
@@ -10,8 +11,12 @@
   import WifiModal from './components/WifiModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import FirmwareModal from './components/FirmwareModal.svelte';
+  import FirmwareUploadPage from './components/FirmwareUploadPage.svelte';
+  import Route from './components/Route.svelte';
 
   const ble = new BLEController();
+
+  let isUploadRoute = $derived(router.matches(['/upload', '/admin']));
 
   let isSettingsModalOpen = $state(false);
   let isWifiModalOpen = $state(false);
@@ -46,6 +51,12 @@
   }
 
   function onKeyDown(e: KeyboardEvent) {
+    if (isUploadRoute) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      return;
+    }
+
     if (e.repeat) return;
     if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       e.preventDefault();
@@ -65,6 +76,12 @@
   }
 
   function onKeyUp(e: KeyboardEvent) {
+    if (isUploadRoute) return;
+    const target = e.target as HTMLElement | null;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      return;
+    }
+
     if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
       e.preventDefault();
       keysDown.delete(e.code);
@@ -77,7 +94,7 @@
   let lastGamepadCmd = 'S';
 
   function pollGamepad() {
-    if (typeof navigator !== 'undefined' && 'getGamepads' in navigator) {
+    if (!isUploadRoute && typeof navigator !== 'undefined' && 'getGamepads' in navigator) {
       const gamepads = navigator.getGamepads();
       const gp = gamepads[0] || gamepads[1] || gamepads[2] || gamepads[3];
 
@@ -111,6 +128,7 @@
   }
 
   function preventDefaults(e: Event) {
+    if (isUploadRoute) return;
     e.preventDefault();
   }
 
@@ -156,64 +174,74 @@
   });
 </script>
 
-<!-- Splash Loading Screen -->
-<LoadingScreen />
+<!-- Route: Firmware Upload Portal (/upload, /admin) -->
+<Route path={['/upload', '/admin', '/upload.html']}>
+  <FirmwareUploadPage onNavigateHome={() => router.navigate('/')} />
+</Route>
 
-<!-- Portrait Lock Warning Screen -->
-<RotateNotice />
+<!-- Route: Main Cockpit Dashboard (/) -->
+<Route path="/">
+  <!-- Splash Loading Screen -->
+  <LoadingScreen />
 
-<!-- Main Cockpit Landscape Shell -->
-<main class="cockpit-container">
-  <!-- Top Telemetry & Header Navigation -->
-  <TopBar 
+  <!-- Portrait Lock Warning Screen -->
+  <RotateNotice />
+
+  <!-- Main Cockpit Landscape Shell -->
+  <main class="cockpit-container">
+    <!-- Top Telemetry & Header Navigation -->
+    <TopBar 
+      {ble} 
+      onOpenWifi={() => isWifiModalOpen = true}
+      onOpenSettings={() => isSettingsModalOpen = true}
+    />
+
+    <!-- Three-Column Cockpit Surface -->
+    <div class="cockpit-workspace">
+      <!-- Left Hand: Touch Joystick, D-Pad, Differential -->
+      <LeftControls {ble} />
+
+      <!-- Center: Ultrasonic Radar, Headlights & Horn, Throttle Quadrant -->
+      <CenterPanel {ble} />
+
+      <!-- Right Hand: Dead-Reckoning Minimap HUD & Telemetry Logs -->
+      <RightPanel {ble} />
+    </div>
+  </main>
+
+  <!-- Backdrop Blur -->
+  {#if isAnyModalOpen}
+    <div 
+      class="modal-backdrop open" 
+      onclick={closeAllModals}
+      onkeydown={(e) => e.key === 'Escape' && closeAllModals()}
+      role="button"
+      tabindex="0"
+      aria-label="Close dialog"
+    ></div>
+  {/if}
+
+  <!-- Modals -->
+  <SettingsModal 
     {ble} 
+    isOpen={isSettingsModalOpen} 
+    onClose={() => isSettingsModalOpen = false}
     onOpenWifi={() => isWifiModalOpen = true}
-    onOpenSettings={() => isSettingsModalOpen = true}
+    onOpenFirmware={() => isFirmwareModalOpen = true}
+    onOpenUpload={() => router.navigate('/upload')}
   />
 
-  <!-- Three-Column Cockpit Surface -->
-  <div class="cockpit-workspace">
-    <!-- Left Hand: Touch Joystick, D-Pad, Differential -->
-    <LeftControls {ble} />
+  <WifiModal 
+    {ble} 
+    isOpen={isWifiModalOpen} 
+    onClose={() => isWifiModalOpen = false} 
+  />
 
-    <!-- Center: Ultrasonic Radar, Headlights & Horn, Throttle Quadrant -->
-    <CenterPanel {ble} />
-
-    <!-- Right Hand: Dead-Reckoning Minimap HUD & Telemetry Logs -->
-    <RightPanel {ble} />
-  </div>
-</main>
-
-<!-- Backdrop Blur -->
-{#if isAnyModalOpen}
-  <div 
-    class="modal-backdrop open" 
-    onclick={closeAllModals}
-    onkeydown={(e) => e.key === 'Escape' && closeAllModals()}
-    role="button"
-    tabindex="0"
-    aria-label="Close dialog"
-  ></div>
-{/if}
-
-<!-- Modals -->
-<WifiModal 
-  {ble} 
-  isOpen={isWifiModalOpen} 
-  onClose={() => isWifiModalOpen = false} 
-/>
-
-<SettingsModal 
-  {ble} 
-  isOpen={isSettingsModalOpen} 
-  onClose={() => isSettingsModalOpen = false}
-  onOpenWifi={() => isWifiModalOpen = true}
-  onOpenFirmware={() => isFirmwareModalOpen = true}
-/>
-
-<FirmwareModal 
-  {ble}
-  isOpen={isFirmwareModalOpen}
-  onClose={() => isFirmwareModalOpen = false}
-  onOpenWifi={() => isWifiModalOpen = true}
-/>
+  <FirmwareModal 
+    {ble}
+    isOpen={isFirmwareModalOpen}
+    onClose={() => isFirmwareModalOpen = false}
+    onOpenWifi={() => isWifiModalOpen = true}
+    onOpenUpload={() => router.navigate('/upload')}
+  />
+</Route>
