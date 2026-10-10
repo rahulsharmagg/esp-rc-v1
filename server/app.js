@@ -44,7 +44,11 @@ server.on('upgrade', (req, socket, head) => {
 /**
  * Start Server with cPanel / Passenger socket & port auto-detection
  */
+let isRunning = false;
+
 function startServer(port = PORT, host = HOST) {
+  if (isRunning) return server;
+  isRunning = true;
   const isNumericPort = typeof port === 'number' || /^\d+$/.test(String(port));
 
   const onListen = () => {
@@ -93,8 +97,8 @@ process.on('unhandledRejection', (reason) => {
   console.error('[Unhandled Rejection]', reason);
 });
 
-// Auto-start if executed directly or via server.js / cPanel startup file
-if (require.main === module || (process.argv[1] && (process.argv[1].endsWith('server.js') || process.argv[1].endsWith('app.js')))) {
+// Auto-start if executed directly or in Passenger / hosting environments
+if (require.main === module || (process.argv[1] && (process.argv[1].endsWith('server.js') || process.argv[1].endsWith('app.js'))) || process.env.PASSENGER_APP_ENV) {
   startServer();
 }
 

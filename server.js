@@ -4,6 +4,8 @@
  */
 const { server, startServer, wsRelay } = require('./server/app.js');
 
+startServer();
+
 module.exports = {
   server,
   startServer,
