@@ -43,8 +43,13 @@ class StaticController {
     const safePath = path.normalize(targetPath).replace(/^(\.\.[\/\\])+/, '');
     let filePath = path.join(PUBLIC_DIR, safePath);
 
-    // Fallback to index.html for SPA routes (e.g. /upload, /cockpit)
+    // Fallback to index.html for SPA routes (e.g. /upload, /cockpit), but 404 for missing static assets (.js, .css, etc.)
+    const hasExtension = path.extname(targetPath) !== '';
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+      if (hasExtension) {
+        sendError(res, 404, '404 File Not Found');
+        return true;
+      }
       filePath = path.join(PUBLIC_DIR, 'index.html');
     }
 
