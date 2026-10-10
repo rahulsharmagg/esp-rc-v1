@@ -1,11 +1,11 @@
-import fs from 'fs';
-import { FirmwareModel } from '../models/firmware.model.js';
-import { sendJson, sendError } from '../utils/response.js';
-import { SEMVER_REGEX } from '../utils/semver.js';
-import { parseMultipart } from '../utils/multipart.js';
-import { ADMIN_PASSWORD, MAX_UPLOAD_BYTES } from '../config/index.js';
+const fs = require('fs');
+const { FirmwareModel } = require('../models/firmware.model.js');
+const { sendJson, sendError } = require('../utils/response.js');
+const { SEMVER_REGEX } = require('../utils/semver.js');
+const { parseMultipart } = require('../utils/multipart.js');
+const { ADMIN_PASSWORD, MAX_UPLOAD_BYTES } = require('../config/index.js');
 
-export class FirmwareController {
+class FirmwareController {
   /**
    * Handle Binary Upload (JSON Base64 / Multipart / Raw)
    */
@@ -219,3 +219,7 @@ export class FirmwareController {
     return true;
   }
 }
+
+module.exports = {
+  FirmwareController
+};

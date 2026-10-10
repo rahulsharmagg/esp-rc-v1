@@ -1,7 +1,7 @@
-import fs from 'fs';
-import path from 'path';
-import { PUBLIC_DIR } from '../config/index.js';
-import { sendError } from '../utils/response.js';
+const fs = require('fs');
+const path = require('path');
+const { PUBLIC_DIR } = require('../config/index.js');
+const { sendError } = require('../utils/response.js');
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -22,7 +22,7 @@ const MIME_TYPES = {
   '.ttf': 'font/ttf'
 };
 
-export class StaticController {
+class StaticController {
   static serveStatic(req, res, reqPath) {
     // 1. Prevent API and Firmware requests from ever falling back to index.html
     if (reqPath.startsWith('/api/')) {
@@ -75,3 +75,7 @@ export class StaticController {
     return true;
   }
 }
+
+module.exports = {
+  StaticController
+};

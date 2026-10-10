@@ -1,7 +1,7 @@
 /**
  * Pure Zero-Dependency Multipart/Form-Data Parser
  */
-export function parseMultipart(buffer, boundary) {
+function parseMultipart(buffer, boundary) {
   const boundaryBuffer = Buffer.from('--' + boundary);
   const result = { fields: {}, files: {} };
   let start = buffer.indexOf(boundaryBuffer);
@@ -46,3 +46,7 @@ export function parseMultipart(buffer, boundary) {
 
   return result;
 }
+
+module.exports = {
+  parseMultipart
+};

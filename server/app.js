@@ -1,7 +1,7 @@
-import http from 'http';
-import { PORT, HOST, PUBLIC_DIR } from './config/index.js';
-import { masterRouter } from './routes/index.js';
-import { WebSocketRelay } from './ws/relay.js';
+const http = require('http');
+const { PORT, HOST, PUBLIC_DIR } = require('./config/index.js');
+const { masterRouter } = require('./routes/index.js');
+const { WebSocketRelay } = require('./ws/relay.js');
 
 // Initialize WebSocket Relay
 const wsRelay = new WebSocketRelay();
@@ -9,7 +9,7 @@ const wsRelay = new WebSocketRelay();
 /**
  * Master HTTP Server
  */
-export const server = http.createServer((req, res) => {
+const server = http.createServer((req, res) => {
   try {
     masterRouter(req, res);
   } catch (err) {
@@ -44,7 +44,7 @@ server.on('upgrade', (req, socket, head) => {
 /**
  * Start Server with cPanel / Passenger socket & port auto-detection
  */
-export function startServer(port = PORT, host = HOST) {
+function startServer(port = PORT, host = HOST) {
   const isNumericPort = typeof port === 'number' || /^\d+$/.test(String(port));
 
   const onListen = () => {
@@ -94,8 +94,12 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // Auto-start if executed directly or via server.js / cPanel startup file
-if (process.argv[1] && (process.argv[1].endsWith('server.js') || process.argv[1].endsWith('app.js'))) {
+if (require.main === module || (process.argv[1] && (process.argv[1].endsWith('server.js') || process.argv[1].endsWith('app.js')))) {
   startServer();
 }
 
-export { wsRelay };
+module.exports = {
+  server,
+  startServer,
+  wsRelay
+};

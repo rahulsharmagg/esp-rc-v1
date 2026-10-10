@@ -1,12 +1,12 @@
-import { HealthController } from '../controllers/health.controller.js';
-import { FirmwareController } from '../controllers/firmware.controller.js';
-import { StaticController } from '../controllers/static.controller.js';
+const { HealthController } = require('../controllers/health.controller.js');
+const { FirmwareController } = require('../controllers/firmware.controller.js');
+const { StaticController } = require('../controllers/static.controller.js');
 
 /**
  * Single Route Registry Table & Master Request Dispatcher
  * Maps all HTTP endpoints to corresponding Controller actions
  */
-export function masterRouter(req, res) {
+function masterRouter(req, res) {
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const { pathname } = urlObj;
   const method = req.method;
@@ -73,3 +73,7 @@ export function masterRouter(req, res) {
   // ==========================================
   return StaticController.serveStatic(req, res, pathname);
 }
+
+module.exports = {
+  masterRouter
+};

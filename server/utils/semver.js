@@ -1,9 +1,9 @@
 /**
  * Pure Node.js Semantic Versioning Parser & Comparator (Zero Dependencies)
  */
-export const SEMVER_REGEX = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
+const SEMVER_REGEX = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
 
-export function parseSemver(v) {
+function parseSemver(v) {
   if (typeof v !== 'string') return null;
   const match = v.trim().match(SEMVER_REGEX);
   if (!match) return null;
@@ -15,7 +15,7 @@ export function parseSemver(v) {
   };
 }
 
-export function compareSemver(a, b) {
+function compareSemver(a, b) {
   const pa = parseSemver(a);
   const pb = parseSemver(b);
   if (!pa || !pb) return String(a).localeCompare(String(b));
@@ -48,3 +48,9 @@ export function compareSemver(a, b) {
   }
   return 0;
 }
+
+module.exports = {
+  SEMVER_REGEX,
+  parseSemver,
+  compareSemver
+};

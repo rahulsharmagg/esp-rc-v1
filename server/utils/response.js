@@ -1,7 +1,7 @@
 /**
  * Pure Node.js HTTP Response Utilities (Zero Dependencies)
  */
-export function sendJson(res, statusCode, data, headers = {}) {
+function sendJson(res, statusCode, data, headers = {}) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
@@ -12,6 +12,11 @@ export function sendJson(res, statusCode, data, headers = {}) {
   res.end(JSON.stringify(data, null, 2));
 }
 
-export function sendError(res, statusCode, message) {
+function sendError(res, statusCode, message) {
   sendJson(res, statusCode, { error: message });
 }
+
+module.exports = {
+  sendJson,
+  sendError
+};

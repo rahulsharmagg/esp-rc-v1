@@ -2,7 +2,7 @@
   "name": "esp-rc-production",
   "version": "4.0.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
     "start": "node server.js",
     "serve": "node server.js"

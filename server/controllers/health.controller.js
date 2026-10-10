@@ -1,6 +1,6 @@
-import { sendJson } from '../utils/response.js';
+const { sendJson } = require('../utils/response.js');
 
-export class HealthController {
+class HealthController {
   static getHealth(req, res) {
     sendJson(res, 200, {
       status: 'ok',
@@ -12,3 +12,7 @@ export class HealthController {
     });
   }
 }
+
+module.exports = {
+  HealthController
+};

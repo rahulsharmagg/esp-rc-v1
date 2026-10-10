@@ -1,10 +1,10 @@
-import { WebSocketServer, WebSocket } from 'ws';
+const { WebSocketServer, WebSocket } = require('ws');
 
 /**
  * Session-based WebSocket Relay powered by standard 'ws' library
  * Matches session codes between Cockpit browser client and ESP32 microcontroller
  */
-export class WebSocketRelay {
+class WebSocketRelay {
   constructor() {
     this.sessions = new Map(); // sessionCode -> { browserWs, espWs, createdAt }
     this.wss = new WebSocketServer({ noServer: true });
@@ -156,3 +156,7 @@ export class WebSocketRelay {
     }
   }
 }
+
+module.exports = {
+  WebSocketRelay
+};

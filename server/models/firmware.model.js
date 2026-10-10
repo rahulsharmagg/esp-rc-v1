@@ -1,10 +1,10 @@
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
-import { FIRMWARE_ROOT } from '../config/index.js';
-import { compareSemver, SEMVER_REGEX } from '../utils/semver.js';
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { FIRMWARE_ROOT } = require('../config/index.js');
+const { compareSemver, SEMVER_REGEX } = require('../utils/semver.js');
 
-export class FirmwareModel {
+class FirmwareModel {
   static getRoot() {
     return FIRMWARE_ROOT;
   }
@@ -130,3 +130,7 @@ export class FirmwareModel {
     return { manifest, size, sha256, isStable };
   }
 }
+
+module.exports = {
+  FirmwareModel
+};
