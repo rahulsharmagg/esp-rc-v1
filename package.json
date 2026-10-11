@@ -12,6 +12,7 @@
     "server": "node server/app.js",
     "serve": "node server/app.js",
     "server:dev": "node server/app.js",
+    "test:ws": "node -e \"eval(require('fs').readFileSync('scripts/test-ws.js','utf8'))\"",
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {

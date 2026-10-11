@@ -311,9 +311,14 @@ export class BLEController {
     this.vibrate([100, 50, 100]);
 
     if (this.otaStatus === 'UPDATING') {
-      this.otaProgress = 85;
-      this.otaMessage = 'ESP32 is downloading and flashing over Wi-Fi. It will auto-reboot in ~15-20s. Click RECONNECT once rebooted.';
-      this.log('ℹ️ BLE disconnected while ESP32 streams firmware over Wi-Fi. Reconnect once ESP32 reboots.', 'info');
+      if (this.cloudWs && this.cloudWs.readyState === WebSocket.OPEN) {
+        this.otaMessage = 'Bluetooth closed to allocate RAM. Streaming live progress via WebSocket relay...';
+        this.log('📡 BLE disconnected (RAM freed for OTA). Live WebSocket stream active.', 'info');
+      } else {
+        this.otaProgress = Math.max(this.otaProgress, 10);
+        this.otaMessage = 'ESP32 is downloading and flashing over Wi-Fi. It will auto-reboot in ~15-20s. Click RECONNECT once rebooted.';
+        this.log('ℹ️ BLE disconnected while ESP32 updates over Wi-Fi.', 'info');
+      }
     }
   }
 
@@ -728,7 +733,7 @@ export class BLEController {
     // Connect to Cloud WebSocket server for dedicated session progress
     this.connectCloudWsForOta(sessionCode);
 
-    // Construct full download URL for ESP32
+    // Construct full download URL for ESP32 with session parameter attached
     let downloadUrl = versionToFlash;
     if (!versionToFlash.startsWith('http://') && !versionToFlash.startsWith('https://')) {
       let espOrigin = 'https://rc.codeblaze.in';
@@ -738,7 +743,10 @@ export class BLEController {
           espOrigin = `${window.location.protocol}//${hostname}${window.location.port ? `:${window.location.port}` : ''}`;
         }
       }
-      downloadUrl = `${espOrigin}/firmware/esp32/${versionToFlash}/firmware.bin`;
+      downloadUrl = `${espOrigin}/firmware/esp32/${versionToFlash}/firmware.bin?s=${sessionCode}`;
+    } else {
+      const sep = downloadUrl.includes('?') ? '&' : '?';
+      downloadUrl = `${downloadUrl}${sep}s=${sessionCode}`;
     }
 
     // Send OTA update command with sessionCode: OTA:UPDATE:<url>:<sessionCode>
@@ -873,9 +881,6 @@ export class BLEController {
         this.wifi = { enabled: true, connected: true, ssid, ip, rssi };
         this.log(`Wi-Fi Connected! IP: ${ip} (SSID: ${ssid})`, 'success');
         this.checkFirmwareUpdate();
-        if (ip && ip !== '0.0.0.0' && !this.isWifiWsConnected && !this.isConnectingWifiWs) {
-          this.connectWifiLan(ip);
-        }
       } else {
         this.wifi = { enabled: true, connected: false, ssid: '', ip: '0.0.0.0', rssi: 0 };
         this.disconnectWifiLan();
@@ -883,15 +888,9 @@ export class BLEController {
     }
     // 4. OTA Firmware Notification Handlers
     else if (message.startsWith('OTA_READY:')) {
-      const parts = message.substring(10).split(':');
-      const ip = parts[0] || this.wifi.ip;
-      this.log(`🚀 ESP32 OTA Ready! Connecting to direct WebSocket ws://${ip}:81. Bluetooth shutting down...`, 'info');
       this.otaStatus = 'UPDATING';
       this.otaProgress = 5;
-      this.otaMessage = 'Connecting to ESP32 local WebSocket for live flash progress...';
-      if (ip && ip !== '0.0.0.0') {
-        this.connectWifiLan(ip);
-      }
+      this.otaMessage = 'ESP32 preparing Over-The-Air flash stream...';
     }
     else if (message.startsWith('OTA_PROGRESS:')) {
       const parts = message.substring(13).split(':');

@@ -2,9 +2,11 @@ const http = require('http');
 const { PORT, HOST, PUBLIC_DIR } = require('./config/index.js');
 const { masterRouter } = require('./routes/index.js');
 const { WebSocketRelay } = require('./ws/relay.js');
+const { FirmwareController } = require('./controllers/firmware.controller.js');
 
 // Initialize WebSocket Relay
 const wsRelay = new WebSocketRelay();
+FirmwareController.wsRelay = wsRelay;
 
 /**
  * Master HTTP Server

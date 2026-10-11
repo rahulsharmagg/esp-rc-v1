@@ -1,9 +1,9 @@
 /**
  * ============================================================================
  * Project: ESP32 BLE RC & Autonomous Obstacle-Avoiding Robot (esp32_car)
- * Firmware: 1.0.8
+ * Firmware: 1.1.4
  *
- * Changes vs 1.0.7
+ * Changes vs 1.0.9
  *   - WebSocket Cloud Relay support with session code handshaking.
  *   - Default OTA URL pointed to custom production endpoint.
  *   - Optimized NVS session storage and cleaned legacy URLs.
@@ -53,23 +53,11 @@
 SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 // Firmware Version & OTA Configuration
-static const char FIRMWARE_VERSION[] = "1.0.8";
+static const char FIRMWARE_VERSION[] = "1.1.4";
 static const char DEFAULT_OTA_URL[]  = "https://rc.codeblaze.in/firmware/esp32/latest/firmware.bin";
 
 // Non-Volatile Storage (NVS) for Wi-Fi credential persistence
 Preferences wifiPrefs;
-
-// Direct LAN WebSocket server (port 81)
-WiFiServer wsServer(81);
-WiFiClient wsClient;
-bool wsClientConnected = false;
-bool wsServerActive = false;
-
-static const size_t WS_MAX_PAYLOAD = 200;      // incoming text frames
-static const size_t WS_MAX_SEND    = 125;      // outgoing frames (2-byte header)
-static char wsHsBuf[768];                      // handshake buffer
-static size_t wsHsLen = 0;
-static unsigned long wsHsStart = 0;
 
 // OTA state
 volatile bool otaRequested = false;
@@ -79,7 +67,6 @@ String otaSessionCode = "";
 
 // Forward declarations
 void processCommand(const String& cmd);
-void handleWsClient();
 
 // Wi-Fi power & connection state (default OFF to maximize battery life)
 bool wifiRadioEnabled = false;
@@ -328,7 +315,7 @@ bool statusLedBlinkState = false;
 static const unsigned long STATUS_LED_BLINK_INTERVAL_MS = 350;
 
 void updateStatusLed() {
-  if (deviceConnected || wsClientConnected) {
+  if (deviceConnected) {
     digitalWrite(STATUS_LED_PIN, HIGH);
   } else {
     unsigned long now = millis();
@@ -371,14 +358,13 @@ long getDistanceCM() {
 }
 
 // ============================================================================
-// INTERRUPTIBLE WAIT (keeps the WebSocket serviced, aborts on mode change)
+// INTERRUPTIBLE WAIT (aborts on mode change)
 // ============================================================================
 
 // Returns false if 'abortable' and the mode is no longer AUTO (a manual command arrived).
 static bool waitMs(unsigned long ms, bool abortable) {
   unsigned long t = millis();
   while (millis() - t < ms) {
-    handleWsClient();
     if (abortable && currentMode != MODE_AUTO_AVOID) return false;
     delay(2);
   }
@@ -511,205 +497,18 @@ static String b64Encode(const String& in) {
 }
 
 // ============================================================================
-// WEBSOCKET SERVER (RFC 6455, minimal, single client)
+// BLE NOTIFICATION HELPERS
 // ============================================================================
-
-String computeWebSocketAccept(const String& key) {
-  String combined = key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-  unsigned char sha1Result[20];
-
-  mbedtls_sha1_context ctx;
-  mbedtls_sha1_init(&ctx);
-  mbedtls_sha1_starts(&ctx);
-  mbedtls_sha1_update(&ctx, (const unsigned char*)combined.c_str(), combined.length());
-  mbedtls_sha1_finish(&ctx, sha1Result);
-  mbedtls_sha1_free(&ctx);
-
-  unsigned char base64Result[36];
-  size_t olen = 0;
-  mbedtls_base64_encode(base64Result, sizeof(base64Result) - 1, &olen, sha1Result, 20);
-  base64Result[olen] = '\0';
-  return String((char*)base64Result);
-}
-
-// Send one frame with payload up to WS_MAX_SEND bytes (2-byte header).
-static void sendWsFrame(uint8_t firstByte, const uint8_t* data, size_t len) {
-  if (!wsClientConnected || !wsClient || !wsClient.connected()) {
-    wsClientConnected = false;
-    return;
-  }
-  if (len > WS_MAX_SEND) len = WS_MAX_SEND;
-  uint8_t frame[2 + WS_MAX_SEND];
-  frame[0] = firstByte;
-  frame[1] = (uint8_t)len;
-  if (len) memcpy(frame + 2, data, len);
-  wsClient.write(frame, len + 2);   // single write, one TCP segment
-}
-
-void sendWs(const char* msg) {
-  size_t len = strlen(msg);
-  if (len == 0) return;
-  sendWsFrame(0x81, (const uint8_t*)msg, len);   // FIN + text
-}
 
 void notifyBle(const char* msg) {
   if (deviceConnected && pTxCharacteristic) {
     pTxCharacteristic->setValue((uint8_t*)msg, strlen(msg));
     pTxCharacteristic->notify();
   }
-  if (wsClientConnected && wsClient && wsClient.connected()) {
-    sendWs(msg);
-  }
 }
 
 void notifyBle(const String& msg) {
   notifyBle(msg.c_str());
-}
-
-static void wsDropClient(const char* why) {
-  if (wsClient) wsClient.stop();
-  wsClientConnected = false;
-  wsHsLen = 0;
-  Serial.printf("[WS] Client dropped: %s\n", why);
-}
-
-// Read exactly n bytes with a short timeout. Returns false on timeout/disconnect.
-static bool wsReadBytes(uint8_t* dst, size_t n, unsigned long timeoutMs = 100) {
-  unsigned long t = millis();
-  size_t got = 0;
-  while (got < n) {
-    if (wsClient.available()) {
-      int c = wsClient.read();
-      if (c >= 0) dst[got++] = (uint8_t)c;
-    } else {
-      if (!wsClient.connected() || millis() - t > timeoutMs) return false;
-      delay(1);
-    }
-  }
-  return true;
-}
-
-// Handshake: collect bytes until the blank line, then answer with the accept key.
-static void wsServiceHandshake() {
-  while (wsClient.available() && wsHsLen < sizeof(wsHsBuf) - 1) {
-    int c = wsClient.read();
-    if (c < 0) break;
-    wsHsBuf[wsHsLen++] = (char)c;
-  }
-  wsHsBuf[wsHsLen] = '\0';
-
-  if (wsHsLen >= sizeof(wsHsBuf) - 1) { wsDropClient("handshake too large"); return; }
-  if (millis() - wsHsStart > 2000)    { wsDropClient("handshake timeout"); return; }
-  if (!strstr(wsHsBuf, "\r\n\r\n")) return;   // wait for more data
-
-  // Find the key header (case-insensitive name)
-  String req(wsHsBuf);
-  String lower = req;
-  lower.toLowerCase();
-  int k = lower.indexOf("sec-websocket-key:");
-  if (k < 0) { wsDropClient("no Sec-WebSocket-Key"); return; }
-  int e = req.indexOf('\r', k);
-  String key = req.substring(k + 18, e < 0 ? req.length() : e);
-  key.trim();
-  if (key.length() == 0) { wsDropClient("empty key"); return; }
-
-  String resp = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "
-                + computeWebSocketAccept(key) + "\r\n\r\n";
-  wsClient.print(resp);
-  wsClientConnected = true;
-  wsHsLen = 0;
-  Serial.println("[WS] Handshake OK, LAN client connected.");
-  char verBuf[32];
-  snprintf(verBuf, sizeof(verBuf), "FIRMWARE_VER:%s", FIRMWARE_VERSION);
-  sendWs(verBuf);
-}
-
-// Read and handle one frame. Returns false if nothing was processed.
-static bool wsServiceFrame() {
-  if (wsClient.available() < 2) return false;
-
-  uint8_t h[2];
-  if (!wsReadBytes(h, 2)) { wsDropClient("short header"); return false; }
-  uint8_t opcode = h[0] & 0x0F;
-  bool isMasked  = (h[1] & 0x80) != 0;
-  uint32_t payloadLen = h[1] & 0x7F;
-
-  if (payloadLen == 126) {
-    uint8_t ext[2];
-    if (!wsReadBytes(ext, 2)) { wsDropClient("short ext length"); return false; }
-    payloadLen = ((uint32_t)ext[0] << 8) | ext[1];
-  } else if (payloadLen == 127) {
-    wsDropClient("64-bit length not supported");
-    return false;
-  }
-
-  uint8_t maskKey[4] = {0, 0, 0, 0};
-  if (isMasked && !wsReadBytes(maskKey, 4)) { wsDropClient("short mask"); return false; }
-
-  if (payloadLen > WS_MAX_PAYLOAD) { wsDropClient("payload too large"); return false; }
-
-  uint8_t payload[WS_MAX_PAYLOAD + 1];
-  if (payloadLen > 0 && !wsReadBytes(payload, payloadLen, 200)) {
-    wsDropClient("short payload");
-    return false;
-  }
-  if (isMasked) {
-    for (uint32_t i = 0; i < payloadLen; i++) payload[i] ^= maskKey[i & 3];
-  }
-  payload[payloadLen] = '\0';
-
-  switch (opcode) {
-    case 0x1: {   // text
-      String cmd((char*)payload);
-      cmd.trim();
-      if (cmd.length() > 0) processCommand(cmd);
-      break;
-    }
-    case 0x8:     // close
-      wsDropClient("close frame");
-      return false;
-    case 0x9:     // ping -> pong with same payload
-      sendWsFrame(0x8A, payload, payloadLen > WS_MAX_SEND ? WS_MAX_SEND : payloadLen);
-      break;
-    default:      // pong, binary, continuation: ignored (already drained)
-      break;
-  }
-  return true;
-}
-
-void handleWsClient() {
-  if (!wifiRadioEnabled || WiFi.status() != WL_CONNECTED || !wsServerActive) return;
-
-  if (wsServer.hasClient()) {
-    if (wsClient && wsClient.connected()) wsClient.stop();
-    wsClient = wsServer.accept();
-    wsClientConnected = false;
-    wsHsLen = 0;
-    wsHsStart = millis();
-    Serial.println("[WS] New LAN client connecting on port 81...");
-  }
-
-  if (wsClient && wsClient.connected()) {
-    if (!wsClientConnected) {
-      wsServiceHandshake();
-    } else {
-      for (int i = 0; i < 4 && wsClientConnected; i++) {
-        if (!wsServiceFrame()) break;
-      }
-    }
-  } else if (wsClientConnected) {
-    wsClientConnected = false;
-    Serial.println("[WS] LAN client connection dropped.");
-  }
-}
-
-static void stopWsServer() {
-  if (wsClient) wsClient.stop();
-  wsClientConnected = false;
-  if (wsServerActive) {
-    wsServer.end();
-    wsServerActive = false;
-  }
 }
 
 // ============================================================================
@@ -783,7 +582,6 @@ void autoConnectSavedWifi() {
 }
 
 void disconnectWifi() {
-  stopWsServer();
   WiFi.disconnect(true);
   activeConnectedSsid = "";
   isConnectingWifi = false;
@@ -792,7 +590,6 @@ void disconnectWifi() {
 }
 
 void turnWifiRadioOff() {
-  stopWsServer();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   wifiRadioEnabled = false;
@@ -842,13 +639,32 @@ static uint16_t portFromUrl(const String& url) {
 static void sanitizeOtaUrl(String& url, String& sessionCode) {
   url.trim();
 
-  // If session code was attached via ":ota_..." or after ".bin:", split it cleanly
+  // 1. Extract session from query param (?s= or ?session=) if present
+  int qs = url.indexOf("?s=");
+  if (qs == -1) qs = url.indexOf("&s=");
+  if (qs != -1) {
+    if (sessionCode.length() == 0) {
+      int amp = url.indexOf('&', qs + 3);
+      sessionCode = (amp == -1) ? url.substring(qs + 3) : url.substring(qs + 3, amp);
+    }
+  } else {
+    int qsess = url.indexOf("?session=");
+    if (qsess == -1) qsess = url.indexOf("&session=");
+    if (qsess != -1) {
+      if (sessionCode.length() == 0) {
+        int amp = url.indexOf('&', qsess + 9);
+        sessionCode = (amp == -1) ? url.substring(qsess + 9) : url.substring(qsess + 9, amp);
+      }
+    }
+  }
+
+  // 2. If session code was attached via ":ota_..." or after ".bin:", split it cleanly
   int binColon = url.lastIndexOf(".bin:");
   if (binColon != -1) {
     if (sessionCode.length() == 0) {
       sessionCode = url.substring(binColon + 5);
     }
-    url = url.substring(0, binColon + 4); // Keep ".bin"
+    url = url.substring(0, binColon + 4);
   } else {
     int otaColon = url.lastIndexOf(":ota_");
     if (otaColon != -1) {
@@ -859,9 +675,7 @@ static void sanitizeOtaUrl(String& url, String& sessionCode) {
     }
   }
 
-  // Automatic HTTPS upgrade:
-  // If host is rc.codeblaze.in (production domain LiteSpeed web server enforces HTTPS 301 redirect),
-  // upgrade to https:// so ESP uses WiFiClientSecure directly without failing on 301!
+  // 3. Automatic HTTPS upgrade for LiteSpeed 301
   if (url.startsWith("http://rc.codeblaze.in") || url.startsWith("http://www.rc.codeblaze.in")) {
     url = "https://" + url.substring(7);
   }
@@ -921,203 +735,142 @@ static String takeOtaError() {
   return e;
 }
 
-// ---- Phase 1 ---------------------------------------------------------------
+// ============================================================================
+// DIRECT LIVE OTA (Connect to WebSocket -> Turn Off Bluetooth -> Download & Flash)
+// ============================================================================
 
-// Called from loop() when the app asked for an update. Returns only if the
-// pre-checks fail (BLE stays up and the app gets OTA_ERROR). Otherwise reboots.
-void prepareBootOta() {
+void startDirectOta() {
   String url = otaRequestUrl.length() ? otaRequestUrl : String(DEFAULT_OTA_URL);
   String sess = otaSessionCode;
   sanitizeOtaUrl(url, sess);
-  Serial.printf("[OTA] Requested URL: %s\n", url.c_str());
-  Serial.printf("[OTA] Session Code:  %s\n", sess.c_str());
-  Serial.printf("[OTA] Heap now: %u, max block: %u\n",
-                (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+
+  Serial.println("\n[OTA] ===== STARTING LIVE FIRMWARE UPDATE =====");
+  Serial.printf("[OTA] Firmware URL: %s\n", url.c_str());
+  Serial.printf("[OTA] Session Code: %s\n", sess.c_str());
+  Serial.printf("[OTA] Free heap before start: %u bytes\n", (unsigned)ESP.getFreeHeap());
+
+  stopMotors();
+  currentMode = MODE_MANUAL;
 
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
-    notifyBle("OTA_ERROR:Bad URL");
+    notifyBle("OTA_ERROR:Bad URL scheme");
     return;
   }
   if (!wifiRadioEnabled || WiFi.status() != WL_CONNECTED) {
     notifyBle("OTA_ERROR:Wi-Fi not connected");
     return;
   }
+
+  String host = hostFromUrl(url);
+  uint16_t port = portFromUrl(url);
   IPAddress resolved;
-  if (!WiFi.hostByName(hostFromUrl(url).c_str(), resolved)) {
-    notifyBle("OTA_ERROR:No internet / DNS failed");
+  if (!WiFi.hostByName(host.c_str(), resolved)) {
+    notifyBle("OTA_ERROR:DNS resolution failed");
     return;
   }
 
-  // Remember the network settings and session code so the car comes back on the SAME IP
-  Preferences p;
-  p.begin(OTA_NS, false);
-  p.putString("url", url);
-  p.putString("sess", sess);
-  p.putUInt("ip",   (uint32_t)WiFi.localIP());
-  p.putUInt("gw",   (uint32_t)WiFi.gatewayIP());
-  p.putUInt("mask", (uint32_t)WiFi.subnetMask());
-  p.putUInt("dns",  (uint32_t)WiFi.dnsIP());
-  p.putBool("pending", true);
-  p.end();
-
-  char ready[64];
-  snprintf(ready, sizeof(ready), "OTA_READY:%s:81", WiFi.localIP().toString().c_str());
-  notifyBle(ready);
-  Serial.println("[OTA] Request stored. Rebooting into update mode...");
-  stopMotors();
-  currentMode = MODE_MANUAL;
-  delay(700);       // let the BLE notification go out
-  ESP.restart();
-}
-
-// ---- Phase 2 ---------------------------------------------------------------
-
-static void otaFail(const String& msg) {
-  Serial.printf("[OTA] FAILED: %s\n", msg.c_str());
-  saveOtaError(msg);
-  notifyBle("OTA_ERROR:" + msg);   // only the WebSocket exists at this point
-  delay(1500);                     // let the frame go out
-  ESP.restart();                   // back to normal mode with BLE
-}
-
-static bool bootWifiConnect(const String& ssid, const String& pass, bool tryStatic,
-                            IPAddress ip, IPAddress gw, IPAddress mask, IPAddress dns) {
-  for (int attempt = 0; attempt < 2; attempt++) {
-    if (attempt == 1 && !tryStatic) break;     // nothing different to try
-    bool useStatic = tryStatic && attempt == 0;
-
-    if (attempt > 0) { WiFi.disconnect(true); delay(200); }
-    WiFi.mode(WIFI_STA);
-    if (useStatic) WiFi.config(ip, gw, mask, dns);
-    else           WiFi.config(IPAddress(0, 0, 0, 0), IPAddress(0, 0, 0, 0), IPAddress(0, 0, 0, 0));
-
-    if (pass.length() > 0) WiFi.begin(ssid.c_str(), pass.c_str());
-    else                   WiFi.begin(ssid.c_str());
-
-    Serial.printf("[OTA] Wi-Fi attempt %d (%s)...\n", attempt + 1, useStatic ? "same IP" : "DHCP");
-    unsigned long t = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t < 12000) {
-      updateStatusLed();
-      delay(100);
-    }
-    if (WiFi.status() == WL_CONNECTED) return true;
-  }
-  return false;
-}
-
-// Called from setup() before BLE is initialised. Does nothing unless a request is pending.
-void runBootOtaIfPending() {
-  Preferences p;
-  p.begin(OTA_NS, false);
-  bool pending = p.getBool("pending", false);
-  if (!pending) { p.end(); return; }
-
-  String url = p.getString("url", "");
-  String sessionCode = p.getString("sess", "");
-  sanitizeOtaUrl(url, sessionCode);
-  IPAddress ip((uint32_t)p.getUInt("ip", 0));
-  IPAddress gw((uint32_t)p.getUInt("gw", 0));
-  IPAddress mask((uint32_t)p.getUInt("mask", 0));
-  IPAddress dns((uint32_t)p.getUInt("dns", 0));
-  p.putBool("pending", false);     // clear FIRST so a crash can never boot-loop
-  p.end();
-
   otaInProgress = true;
-  Serial.println("[OTA] ===== BOOT UPDATE MODE =====");
-  Serial.printf("[OTA] URL:         %s\n", url.c_str());
-  Serial.printf("[OTA] SessionCode: %s\n", sessionCode.c_str());
-  Serial.printf("[OTA] Heap: %u, max block: %u\n",
+  notifyBle("OTA_PROGRESS:2:Switching to Cloud WebSocket...");
+  delay(250);
+
+  // 1. Turn off Bluetooth FIRST to maximize internal SRAM for TLS & WebSocket
+  Serial.println("[OTA] Turning OFF Bluetooth to free RAM for WSS & OTA...");
+  if (pServer && pServer->getAdvertising()) {
+    pServer->getAdvertising()->stop();
+  }
+  BLEDevice::deinit(true);
+  btStop();
+  deviceConnected = false;
+  delay(150);
+  Serial.printf("[OTA] Bluetooth OFF! Available Heap: %u bytes, max block: %u\n",
                 (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 
-  if (url.length() == 0) { otaInProgress = false; saveOtaError("No URL stored"); return; }
+  // 2. Connect to Cloud WebSocket Relay (/ws)
+  WiFiClient* pWsClient = nullptr;
+  bool isSecureWs = url.startsWith("https://") || port == 443;
+  bool wsConnected = false;
 
-  String ssid, pass;
-  loadWifiCredentials(ssid, pass);
-  if (ssid.length() == 0) { otaInProgress = false; saveOtaError("No saved Wi-Fi"); return; }
+  Serial.printf("[OTA WS] Connecting to %s at %s:%u/ws...\n", isSecureWs ? "WSS" : "WS", host.c_str(), port);
 
-  bool haveStatic = (uint32_t)ip != 0 && (uint32_t)gw != 0 && (uint32_t)mask != 0;
-  if (!bootWifiConnect(ssid, pass, haveStatic, ip, gw, mask, dns)) {
-    otaInProgress = false;
-    saveOtaError("Wi-Fi connect failed");
-    WiFi.mode(WIFI_OFF);
-    return;                        // continue normal boot, BLE comes up and reports the error
-  }
-
-  wifiRadioEnabled = true;
-  activeConnectedSsid = WiFi.SSID();
-  WiFi.setSleep(false);
-  wsServer.begin();
-  wsServerActive = true;
-  Serial.printf("[OTA] Wi-Fi up. IP: %s  RSSI: %d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-
-  // Connect to Cloud WebSocket Relay (/ws) for targeted browser progress streaming
-  WiFiClient otaCloudWs;
-  bool cloudWsConnected = false;
-  String host = hostFromUrl(url);
-  uint16_t port = portFromUrl(url);
-
-  if (host.length() > 0 && !url.startsWith("https://")) {
-    Serial.printf("[OTA WS] Connecting to Cloud WebSocket Relay at %s:%u/ws...\n", host.c_str(), port);
-    if (otaCloudWs.connect(host.c_str(), port, 4000)) {
-      String handshake = "GET /ws HTTP/1.1\r\n"
-                         "Host: " + host + ":" + String(port) + "\r\n"
-                         "Upgrade: websocket\r\n"
-                         "Connection: Upgrade\r\n"
-                         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
-                         "Sec-WebSocket-Version: 13\r\n\r\n";
-      otaCloudWs.print(handshake);
-
-      unsigned long tHs = millis();
-      String response = "";
-      while (millis() - tHs < 3000) {
-        while (otaCloudWs.available()) {
-          char c = (char)otaCloudWs.read();
-          response += c;
-          if (response.endsWith("\r\n\r\n")) break;
-        }
-        if (response.indexOf("101") != -1) {
-          cloudWsConnected = true;
-          break;
-        }
-        delay(10);
-      }
-
-      if (cloudWsConnected) {
-        Serial.println("[OTA WS] Cloud WS Handshake OK! Registering ESP session...");
-        if (sessionCode.length() > 0) {
-          String regJson = "{\"type\":\"REGISTER_SESSION\",\"sessionCode\":\"" + sessionCode + "\",\"role\":\"esp32\"}";
-          sendWsClientFrame(otaCloudWs, regJson);
-          delay(40);
-        }
-        String startJson = "{\"type\":\"OTA_START\",\"sessionCode\":\"" + sessionCode + "\",\"message\":\"ESP32 connected! Downloading firmware...\"}";
-        sendWsClientFrame(otaCloudWs, startJson);
-      } else {
-        Serial.println("[OTA WS] Cloud WS Handshake failed or non-101 response.");
-      }
+  if (isSecureWs) {
+    WiFiClientSecure* sec = new WiFiClientSecure();
+    sec->setInsecure();
+    sec->setHandshakeTimeout(15);
+    if (sec->connect(host.c_str(), port, 10000)) {
+      pWsClient = sec;
+      wsConnected = true;
     } else {
-      Serial.println("[OTA WS] Could not connect TCP to Cloud WS host.");
+      char eb[100] = {0};
+      int e = sec->lastError(eb, sizeof(eb));
+      Serial.printf("[OTA WS] TLS connection failed (code %d: %s)\n", e, eb);
+      delete sec;
+    }
+  } else {
+    WiFiClient* client = new WiFiClient();
+    if (client->connect(host.c_str(), port, 5000)) {
+      pWsClient = client;
+      wsConnected = true;
+    } else {
+      delete client;
     }
   }
 
-  notifyBle("OTA_PROGRESS:1:Connecting to firmware server...");
+  if (wsConnected && pWsClient) {
+    String hostHeader = (port == 443 || port == 80) ? host : (host + ":" + String(port));
+    String handshake = "GET /ws?role=esp32 HTTP/1.1\r\n"
+                       "Host: " + hostHeader + "\r\n"
+                       "Upgrade: websocket\r\n"
+                       "Connection: Upgrade\r\n"
+                       "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                       "Sec-WebSocket-Version: 13\r\n\r\n";
+    pWsClient->print(handshake);
 
-  httpUpdate.onProgress([&otaCloudWs, &sessionCode, &cloudWsConnected](int cur, int total) {
+    unsigned long tHs = millis();
+    String resp = "";
+    while (millis() - tHs < 3000) {
+      while (pWsClient->available()) {
+        char c = (char)pWsClient->read();
+        resp += c;
+        if (resp.endsWith("\r\n\r\n")) break;
+      }
+      if (resp.indexOf("101") != -1 && resp.indexOf("\r\n\r\n") != -1) break;
+      delay(10);
+    }
+
+    if (resp.indexOf("101") != -1) {
+      Serial.println("[OTA WS] Connected. Registering session...");
+      if (sess.length() > 0) {
+        String reg = "{\"type\":\"REGISTER_SESSION\",\"sessionCode\":\"" + sess + "\",\"role\":\"esp32\"}";
+        sendWsClientFrame(*pWsClient, reg);
+        delay(30);
+      }
+      String start = "{\"type\":\"OTA_START\",\"sessionCode\":\"" + sess + "\",\"message\":\"Downloading firmware...\"}";
+      sendWsClientFrame(*pWsClient, start);
+      delay(50);
+    }
+  }
+
+  // CLOSE & FREE WebSocket TLS socket to return ~45KB contiguous heap for firmware download!
+  if (pWsClient) {
+    pWsClient->stop();
+    delete pWsClient;
+    pWsClient = nullptr;
+  }
+  delay(50);
+  Serial.printf("[OTA] Heap ready for download: %u bytes (max block: %u)\n",
+                (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
+
+  // 3. Download & Flash via HTTPUpdate (Single TLS connection has 100% of heap!)
+  httpUpdate.onProgress([](int cur, int total) {
     static int last = -1;
     if (total <= 0) return;
     int pct = (int)(((int64_t)cur * 100) / total);
-    if (pct != last && (pct % 2 == 0 || pct == 100)) {
+    if (pct != last && (pct % 10 == 0 || pct == 100)) {
       last = pct;
-      if (cloudWsConnected && otaCloudWs.connected()) {
-        String progJson = "{\"type\":\"OTA_PROGRESS\",\"sessionCode\":\"" + sessionCode + "\",\"pct\":" + String(pct) + ",\"bytesSent\":" + String(cur) + ",\"totalSize\":" + String(total) + ",\"status\":\"FLASHING\"}";
-        sendWsClientFrame(otaCloudWs, progJson);
-      }
-      char b[64];
-      snprintf(b, sizeof(b), "OTA_PROGRESS:%d:Writing firmware...", pct);
-      notifyBle(b);
-      Serial.printf("[OTA] Flash progress: %d%%\n", pct);
+      Serial.printf("[OTA] %d%%\n", pct);
     }
-    handleWsClient();
   });
+
   httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
   httpUpdate.rebootOnUpdate(false);
 
@@ -1127,66 +880,45 @@ void runBootOtaIfPending() {
   for (int attempt = 1; attempt <= 2; attempt++) {
     Serial.printf("[OTA] Connecting via %s to: %s\n", useTls ? "HTTPS" : "HTTP", url.c_str());
     if (useTls) {
-      WiFiClientSecure client;
-      client.setInsecure();          // SSL without strict root CA for seamless zero-config OTA
-      client.setHandshakeTimeout(30);
-      ret = httpUpdate.update(client, url);
+      WiFiClientSecure dlClient;
+      dlClient.setInsecure();
+      dlClient.setHandshakeTimeout(30);
+      ret = httpUpdate.update(dlClient, url);
       if (ret == HTTP_UPDATE_FAILED) {
         char eb[100] = {0};
-        int e = client.lastError(eb, sizeof(eb));
-        Serial.printf("[OTA] TLS lastError %d: %s\n", e, eb);
+        int e = dlClient.lastError(eb, sizeof(eb));
+        Serial.printf("[OTA] TLS error %d: %s\n", e, eb);
       }
     } else {
-      WiFiClient client;             // plain HTTP
-      ret = httpUpdate.update(client, url);
+      WiFiClient dlClient;
+      ret = httpUpdate.update(dlClient, url);
     }
-    Serial.printf("[OTA] Attempt %d result %d. Heap: %u, max block: %u\n", attempt, (int)ret,
-                  (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
 
     if (ret == HTTP_UPDATE_OK) break;
 
-    // If HTTP failed because of 301/302 redirect (Error -104 / Wrong HTTP Code), switch attempt 2 to HTTPS!
-    if (!useTls && (httpUpdate.getLastError() == HTTP_UE_SERVER_WRONG_HTTP_CODE || httpUpdate.getLastError() == HTTPC_ERROR_CONNECTION_REFUSED || url.startsWith("http://"))) {
-      Serial.println("[OTA] Plain HTTP returned wrong code (redirect). Switching attempt 2 to HTTPS...");
+    // LiteSpeed 301 redirect fallback: upgrade to HTTPS for attempt 2
+    if (!useTls && (httpUpdate.getLastError() == HTTP_UE_SERVER_WRONG_HTTP_CODE || url.startsWith("http://"))) {
+      Serial.println("[OTA] HTTP redirected. Switching attempt 2 to HTTPS...");
       url.replace("http://", "https://");
       useTls = true;
       delay(1000);
       continue;
     }
 
-    if (ret != HTTP_UPDATE_FAILED || httpUpdate.getLastError() != HTTPC_ERROR_CONNECTION_REFUSED) break;
-    if (attempt < 2) {
-      notifyBle("OTA_PROGRESS:1:Retrying connection...");
-      delay(2000);
-    }
+    if (attempt < 2) delay(1500);
   }
 
+  // 4. Handle result & reboot
   if (ret == HTTP_UPDATE_OK) {
-    Serial.println("[OTA] Flash OK, rebooting into new firmware.");
-    if (cloudWsConnected && otaCloudWs.connected()) {
-      String compJson = "{\"type\":\"OTA_COMPLETE\",\"sessionCode\":\"" + sessionCode + "\",\"pct\":100,\"status\":\"REBOOTING\"}";
-      sendWsClientFrame(otaCloudWs, compJson);
-      delay(150);
-    }
-    notifyBle("OTA_COMPLETE:Rebooting...");
-    delay(1500);
+    Serial.println("[OTA] Flash SUCCESS! Rebooting into new firmware...");
+    delay(1000);
     ESP.restart();
-  } else if (ret == HTTP_UPDATE_NO_UPDATES) {
-    if (cloudWsConnected && otaCloudWs.connected()) {
-      String errJson = "{\"type\":\"OTA_ERROR\",\"sessionCode\":\"" + sessionCode + "\",\"message\":\"Server returned no update\"}";
-      sendWsClientFrame(otaCloudWs, errJson);
-      delay(100);
-    }
-    otaFail("Server returned no update");
   } else {
-    Serial.printf("[OTA] Error %d: %s\n", httpUpdate.getLastError(),
-                  httpUpdate.getLastErrorString().c_str());
-    if (cloudWsConnected && otaCloudWs.connected()) {
-      String errJson = "{\"type\":\"OTA_ERROR\",\"sessionCode\":\"" + sessionCode + "\",\"message\":\"" + httpUpdate.getLastErrorString() + "\"}";
-      sendWsClientFrame(otaCloudWs, errJson);
-      delay(100);
-    }
-    otaFail(httpUpdate.getLastErrorString());
+    String errStr = httpUpdate.getLastErrorString();
+    Serial.printf("[OTA] Flash FAILED: %s\n", errStr.c_str());
+    saveOtaError(errStr);
+    delay(2000);
+    ESP.restart();
   }
 }
 
@@ -1485,10 +1217,8 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   setHorn(false);
 
-  // 4b. Pending OTA? Must run BEFORE BLE exists so TLS gets nearly all the heap.
-  //     Reboots when done; returns only if the update could not even start.
-  runBootOtaIfPending();
-  bootOtaError = takeOtaError();   // reason a previous update failed (reported over BLE)
+  // 4b. Check for previous OTA error from failed update (reported over BLE)
+  bootOtaError = takeOtaError();
 
   // 5. Servo (after motor pins are safe)
   ESP32PWM::allocateTimer(0);
@@ -1564,10 +1294,10 @@ void setup() {
 // ============================================================================
 
 void loop() {
-  // -1. OTA request (flag set by processCommand). Never returns.
+  // -1. OTA request (flag set by processCommand)
   if (otaRequested) {
     otaRequested = false;
-    prepareBootOta();   // reboots on success; returns only if a pre-check failed (BLE stays up)
+    startDirectOta();
   }
 
   unsigned long currentMillis = millis();
@@ -1634,11 +1364,6 @@ void loop() {
       notifyBle(connBuf);
       Serial.printf("[WIFI] Connected to %s! IP: %s (RSSI: %d dBm)\n", activeConnectedSsid.c_str(), ip.c_str(), rssi);
 
-      if (!wsServerActive) {
-        wsServer.begin();
-        wsServerActive = true;
-        Serial.printf("[WS] LAN WebSocket server active: ws://%s:81\n", ip.c_str());
-      }
     } else if (currentMillis - wifiConnectStartTime > 12000) {
       isConnectingWifi = false;
       notifyBle("WIFI_STATUS:DISCONNECTED:0.0.0.0:0:");
@@ -1646,10 +1371,7 @@ void loop() {
     }
   }
 
-  // 2.1 LAN WebSocket
-  handleWsClient();
-
-  bool isAnyClientConnected = deviceConnected || wsClientConnected;
+  bool isAnyClientConnected = deviceConnected;
 
   // 3. BLE re-advertising on disconnect
   if (!deviceConnected && oldDeviceConnected) {

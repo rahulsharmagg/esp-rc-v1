@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ESP-RC WebSocket Live Relay Tester</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: monospace; background: #090d16; color: #f8fafc; padding: 20px; margin: 0; }
+    h2 { margin-top: 0; color: #38bdf8; display: flex; align-items: center; justify-content: space-between; }
+    .top-bar { background: #131d2e; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input, button { padding: 8px 12px; font-family: monospace; border-radius: 6px; border: 1px solid #334155; background: #1e293b; color: #fff; }
+    button { background: #2563eb; cursor: pointer; border: none; font-weight: bold; transition: background 0.2s; }
+    button:hover { background: #1d4ed8; }
+    button.danger { background: #dc2626; }
+    button.success { background: #16a34a; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: #131d2e; padding: 16px; border-radius: 8px; border: 1px solid #1e293b; display: flex; flex-direction: column; }
+    .card-title { font-size: 16px; font-weight: bold; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+    .status-badge { font-size: 12px; padding: 3px 8px; border-radius: 4px; font-weight: bold; }
+    .badge-offline { background: #ef444422; color: #ef4444; border: 1px solid #ef444444; }
+    .badge-online { background: #22c55e22; color: #22c55e; border: 1px solid #22c55e44; }
+    .log-box { background: #050811; border: 1px solid #1e293b; height: 350px; overflow-y: auto; padding: 10px; font-size: 12px; line-height: 1.6; border-radius: 6px; flex: 1; }
+    .progress-bar-bg { width: 100%; height: 16px; background: #1e293b; border-radius: 4px; overflow: hidden; margin: 8px 0; }
+    .progress-bar-fill { height: 100%; width: 0%; background: #3b82f6; transition: width 0.3s; }
+    .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .sent { color: #38bdf8; }
+    .recv { color: #4ade80; }
+    .err { color: #f87171; }
+    .info { color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <h2>
+    <span>🛰️ ESP-RC WebSocket Live Relay Tester</span>
+    <span style="font-size: 13px; font-weight: normal; color: #94a3b8;">Server: rc.codeblaze.in/ws</span>
+  </h2>
+
+  <div class="top-bar">
+    <label>Server URL:</label>
+    <input id="serverUrl" type="text" value="wss://rc.codeblaze.in/ws" style="width: 280px;">
+    
+    <label style="margin-left: 10px;">Session Code:</label>
+    <input id="sessionCode" type="text" value="test_session_1" style="width: 160px; font-weight: bold; color: #38bdf8;">
+    
+    <button class="success" onclick="connectBoth()">⚡ Connect Both Clients</button>
+    <button class="danger" onclick="disconnectBoth()">Disconnect Both</button>
+  </div>
+
+  <div class="grid">
+    <!-- CLIENT A: BROWSER COCKPIT -->
+    <div class="card">
+      <div class="card-title">
+        <span>💻 Client A: Web Browser (Cockpit)</span>
+        <span id="statusA" class="status-badge badge-offline">DISCONNECTED</span>
+      </div>
+
+      <div class="btn-group">
+        <button onclick="connectA()">Connect Browser</button>
+        <button onclick="registerA()">Register as Browser</button>
+        <button onclick="clearLog('logsA')" style="background: #334155;">Clear Log</button>
+      </div>
+
+      <div style="margin-bottom: 8px;">
+        <div style="display: flex; justify-content: space-between; font-size: 11px; color: #94a3b8;">
+          <span>OTA FLASH PROGRESS</span>
+          <span id="pctTextA">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div id="progBarA" class="progress-bar-fill"></div>
+        </div>
+      </div>
+
+      <div id="logsA" class="log-box"></div>
+    </div>
+
+    <!-- CLIENT B: ESP32 ROBOT SIMULATOR -->
+    <div class="card">
+      <div class="card-title">
+        <span>🤖 Client B: ESP32 Robot Simulator</span>
+        <span id="statusB" class="status-badge badge-offline">DISCONNECTED</span>
+      </div>
+
+      <div class="btn-group">
+        <button onclick="connectB()">Connect ESP32</button>
+        <button onclick="registerB()">Register as ESP32</button>
+        <button onclick="sendOtaProgress(25)">Send 25%</button>
+        <button onclick="sendOtaProgress(50)">Send 50%</button>
+        <button onclick="sendOtaProgress(75)">Send 75%</button>
+        <button onclick="sendOtaProgress(100)">Send 100% (Complete)</button>
+        <button onclick="clearLog('logsB')" style="background: #334155;">Clear Log</button>
+      </div>
+
+      <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+        <input id="customMsgB" type="text" placeholder='{"type":"OTA_START"} or any JSON' style="flex: 1;" onkeydown="if(event.key==='Enter') sendCustomB()">
+        <button onclick="sendCustomB()">Send from ESP32</button>
+      </div>
+
+      <div id="logsB" class="log-box"></div>
+    </div>
+  </div>
+
+  <script>
+    let wsA = null;
+    let wsB = null;
+
+    function getUrl() { return document.getElementById('serverUrl').value.trim(); }
+    function getSession() { return document.getElementById('sessionCode').value.trim(); }
+
+    function log(elId, text, cls = 'info') {
+      const box = document.getElementById(elId);
+      const d = document.createElement('div');
+      d.className = cls;
+      d.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+      box.appendChild(d);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function clearLog(elId) { document.getElementById(elId).innerHTML = ''; }
+
+    function connectBoth() {
+      connectA();
+      setTimeout(connectB, 300);
+    }
+
+    function disconnectBoth() {
+      if (wsA) wsA.close();
+      if (wsB) wsB.close();
+    }
+
+    // ====== CLIENT A (BROWSER) ======
+    function connectA() {
+      if (wsA && (wsA.readyState === WebSocket.OPEN || wsA.readyState === WebSocket.CONNECTING)) return;
+      const url = getUrl();
+      log('logsA', `Connecting to ${url}...`, 'info');
+      wsA = new WebSocket(url);
+
+      wsA.onopen = () => {
+        document.getElementById('statusA').textContent = 'CONNECTED';
+        document.getElementById('statusA').className = 'status-badge badge-online';
+        log('logsA', 'Connected to WebSocket relay!', 'recv');
+        registerA();
+      };
+
+      wsA.onmessage = (e) => {
+        log('logsA', `RECV: ${e.data}`, 'recv');
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'OTA_PROGRESS' || data.pct !== undefined) {
+            const pct = data.pct || 0;
+            document.getElementById('progBarA').style.width = pct + '%';
+            document.getElementById('pctTextA').textContent = pct + '%';
+          }
+          if (data.type === 'ESP_ATTACHED') {
+            log('logsA', '🚀 ESP32 attached to this session!', 'info');
+          }
+        } catch (_) {}
+      };
+
+      wsA.onclose = () => {
+        document.getElementById('statusA').textContent = 'DISCONNECTED';
+        document.getElementById('statusA').className = 'status-badge badge-offline';
+        log('logsA', 'Disconnected.', 'err');
+      };
+      wsA.onerror = () => log('logsA', 'Connection error.', 'err');
+    }
+
+    function registerA() {
+      if (!wsA || wsA.readyState !== WebSocket.OPEN) return;
+      const msg = { type: 'REGISTER_SESSION', sessionCode: getSession(), role: 'browser' };
+      wsA.send(JSON.stringify(msg));
+      log('logsA', `SENT: ${JSON.stringify(msg)}`, 'sent');
+    }
+
+    // ====== CLIENT B (ESP32) ======
+    function connectB() {
+      if (wsB && (wsB.readyState === WebSocket.OPEN || wsB.readyState === WebSocket.CONNECTING)) return;
+      const url = getUrl();
+      log('logsB', `Connecting to ${url}...`, 'info');
+      wsB = new WebSocket(url);
+
+      wsB.onopen = () => {
+        document.getElementById('statusB').textContent = 'CONNECTED';
+        document.getElementById('statusB').className = 'status-badge badge-online';
+        log('logsB', 'Connected to WebSocket relay!', 'recv');
+        registerB();
+      };
+
+      wsB.onmessage = (e) => {
+        log('logsB', `RECV: ${e.data}`, 'recv');
+      };
+
+      wsB.onclose = () => {
+        document.getElementById('statusB').textContent = 'DISCONNECTED';
+        document.getElementById('statusB').className = 'status-badge badge-offline';
+        log('logsB', 'Disconnected.', 'err');
+      };
+      wsB.onerror = () => log('logsB', 'Connection error.', 'err');
+    }
+
+    function registerB() {
+      if (!wsB || wsB.readyState !== WebSocket.OPEN) return;
+      const msg = { type: 'REGISTER_SESSION', sessionCode: getSession(), role: 'esp32' };
+      wsB.send(JSON.stringify(msg));
+      log('logsB', `SENT: ${JSON.stringify(msg)}`, 'sent');
+    }
+
+    function sendOtaProgress(pct) {
+      if (!wsB || wsB.readyState !== WebSocket.OPEN) {
+        log('logsB', 'ESP32 is not connected! Click Connect ESP32 first.', 'err');
+        return;
+      }
+      const msg = {
+        type: 'OTA_PROGRESS',
+        sessionCode: getSession(),
+        pct: pct,
+        bytesSent: pct * 18000,
+        totalSize: 1800000,
+        status: pct >= 100 ? 'REBOOTING' : 'FLASHING'
+      };
+      wsB.send(JSON.stringify(msg));
+      log('logsB', `SENT to Session: ${JSON.stringify(msg)}`, 'sent');
+    }
+
+    function sendCustomB() {
+      const input = document.getElementById('customMsgB');
+      const val = input.value.trim();
+      if (!val || !wsB || wsB.readyState !== WebSocket.OPEN) return;
+      try {
+        const obj = JSON.parse(val);
+        if (!obj.sessionCode) obj.sessionCode = getSession();
+        wsB.send(JSON.stringify(obj));
+        log('logsB', `SENT: ${JSON.stringify(obj)}`, 'sent');
+      } catch {
+        wsB.send(JSON.stringify({ type: 'MESSAGE', text: val, sessionCode: getSession() }));
+        log('logsB', `SENT: ${val}`, 'sent');
+      }
+      input.value = '';
+    }
+  </script>
+</body>
+</html>
