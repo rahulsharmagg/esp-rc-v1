@@ -65,7 +65,8 @@ function masterRouter(req, res) {
   // ==========================================
   const binaryMatch = pathname.match(/^\/firmware\/esp32\/([^\/]+)\/firmware\.bin(:[^\/]+)?$/);
   if (method === 'GET' && binaryMatch) {
-    return FirmwareController.streamBinary(req, res, binaryMatch[1]);
+    const sessionCode = urlObj.searchParams.get('session') || urlObj.searchParams.get('s') || (binaryMatch[2] ? binaryMatch[2].substring(1) : '') || '';
+    return FirmwareController.streamBinary(req, res, binaryMatch[1], sessionCode);
   }
 
   // ==========================================

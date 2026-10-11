@@ -186,7 +186,7 @@ class FirmwareController {
   /**
    * Stream Raw Binary to ESP32
    */
-  static streamBinary(req, res, version) {
+  static streamBinary(req, res, version, sessionCode = '') {
     let targetVersion = version;
     if (targetVersion === 'latest') {
       const stable = FirmwareModel.getLatestStable();
@@ -214,15 +214,50 @@ class FirmwareController {
         return;
       }
 
+      const totalSize = stats.size;
       res.writeHead(200, {
         'Content-Type': 'application/octet-stream',
-        'Content-Length': stats.size,
+        'Content-Length': totalSize,
         'Content-Disposition': `attachment; filename="firmware-${version}.bin"`,
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Access-Control-Allow-Origin': '*'
       });
 
       const stream = fs.createReadStream(binaryPath);
+      let bytesSent = 0;
+      let lastPct = -1;
+
+      stream.on('data', (chunk) => {
+        bytesSent += chunk.length;
+        if (totalSize > 0 && FirmwareController.wsRelay) {
+          const pct = Math.round((bytesSent / totalSize) * 100);
+          if (pct !== lastPct && (pct % 5 === 0 || pct === 100)) {
+            lastPct = pct;
+            FirmwareController.wsRelay.sendProgress(sessionCode, {
+              type: 'OTA_PROGRESS',
+              sessionCode,
+              pct,
+              bytesSent,
+              totalSize,
+              status: 'FLASHING'
+            });
+          }
+        }
+      });
+
+      stream.on('end', () => {
+        if (FirmwareController.wsRelay) {
+          setTimeout(() => {
+            FirmwareController.wsRelay.sendProgress(sessionCode, {
+              type: 'OTA_COMPLETE',
+              sessionCode,
+              pct: 100,
+              status: 'REBOOTING'
+            });
+          }, 350);
+        }
+      });
+
       stream.pipe(res);
     });
 

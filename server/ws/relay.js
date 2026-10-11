@@ -106,6 +106,25 @@ class WebSocketRelay {
   }
 
   /**
+   * Send progress to browser in session or broadcast
+   */
+  sendProgress(sessionCode, payload) {
+    if (sessionCode && this.sessions.has(sessionCode)) {
+      const sess = this.sessions.get(sessionCode);
+      if (sess.browserWs && sess.browserWs.readyState === WebSocket.OPEN) {
+        this.send(sess.browserWs, payload);
+        return;
+      }
+    }
+    // Broadcast fallback to all browsers
+    for (const browser of this.browsers) {
+      if (browser.readyState === WebSocket.OPEN) {
+        this.send(browser, payload);
+      }
+    }
+  }
+
+  /**
    * Process and route WebSocket messages:
    * ESP -> Browser
    * Browser -> ESP
